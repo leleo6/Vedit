@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod image;
 
 use anyhow::Result;
 use crate::project::Project;

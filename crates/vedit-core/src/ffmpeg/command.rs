@@ -6,6 +6,9 @@ use tokio::process::Command;
 #[derive(Debug, Default)]
 pub struct FfmpegCommand {
     args: Vec<String>,
+    video_filters: Vec<String>,
+    audio_filters: Vec<String>,
+    complex_filters: Vec<String>,
     output: Option<PathBuf>,
 }
 
@@ -61,14 +64,17 @@ impl FfmpegCommand {
     }
 
     pub fn video_filter(&mut self, filter: impl Into<String>) -> &mut Self {
-        self.args.push("-vf".into());
-        self.args.push(filter.into());
+        self.video_filters.push(filter.into());
         self
     }
 
     pub fn audio_filter(&mut self, filter: impl Into<String>) -> &mut Self {
-        self.args.push("-af".into());
-        self.args.push(filter.into());
+        self.audio_filters.push(filter.into());
+        self
+    }
+
+    pub fn complex_filter(&mut self, filter: impl Into<String>) -> &mut Self {
+        self.complex_filters.push(filter.into());
         self
     }
 
@@ -77,8 +83,31 @@ impl FfmpegCommand {
         self
     }
 
+    /// Agrega argumentos arbitrarios a la línea de comando (útil para flags especiales)
+    pub fn raw_args(&mut self, args: &[&str]) -> &mut Self {
+        for a in args {
+            self.args.push(a.to_string());
+        }
+        self
+    }
+
     pub fn build_args(&self) -> Vec<String> {
         let mut args = self.args.clone();
+        
+        if !self.complex_filters.is_empty() {
+            args.push("-filter_complex".into());
+            args.push(self.complex_filters.join(";"));
+        } else {
+            if !self.video_filters.is_empty() {
+                args.push("-vf".into());
+                args.push(self.video_filters.join(","));
+            }
+            if !self.audio_filters.is_empty() {
+                args.push("-af".into());
+                args.push(self.audio_filters.join(","));
+            }
+        }
+
         if let Some(ref out) = self.output {
             args.push(out.to_string_lossy().to_string());
         }

@@ -32,6 +32,8 @@ pub struct Track {
     pub muted: bool,
     /// Orden en el timeline (menor = primero)
     pub order: usize,
+    /// Orden de superposición (solo para tracks de imagen)
+    pub layer_order: usize,
     pub audio_clips: Vec<AudioClip>,
     pub video_clips: Vec<VideoClip>,
     pub image_clips: Vec<ImageClip>,
@@ -46,6 +48,7 @@ impl Track {
             volume: 1.0,
             muted: false,
             order: 0,
+            layer_order: 0,
             audio_clips: Vec::new(),
             video_clips: Vec::new(),
             image_clips: Vec::new(),
@@ -60,7 +63,10 @@ impl Track {
         let video_end = self.video_clips.iter()
             .map(|c| c.timeline_start + c.duration())
             .fold(0.0_f64, f64::max);
-        audio_end.max(video_end)
+        let image_end = self.image_clips.iter()
+            .map(|c| c.timeline_start + c.duration())
+            .fold(0.0_f64, f64::max);
+        audio_end.max(video_end).max(image_end)
     }
 
     pub fn mute(&mut self) { self.muted = true; }
@@ -106,5 +112,123 @@ impl Track {
 
     pub fn video_clip_mut(&mut self, id: Uuid) -> Option<&mut VideoClip> {
         self.video_clips.iter_mut().find(|c| c.id == id)
+    }
+
+    // ── Image clips ────────────────────────────────────────────────────────
+    pub fn add_image_clip(&mut self, clip: ImageClip) -> Uuid {
+        let id = clip.id;
+        self.image_clips.push(clip);
+        id
+    }
+
+    pub fn remove_image_clip(&mut self, id: Uuid) -> bool {
+        let before = self.image_clips.len();
+        self.image_clips.retain(|c| c.id != id);
+        self.image_clips.len() < before
+    }
+
+    pub fn image_clip_mut(&mut self, id: Uuid) -> Option<&mut ImageClip> {
+        self.image_clips.iter_mut().find(|c| c.id == id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_track_kind_display() {
+        assert_eq!(TrackKind::Audio.to_string(), "audio");
+        assert_eq!(TrackKind::Video.to_string(), "video");
+        assert_eq!(TrackKind::Image.to_string(), "image");
+    }
+
+    #[test]
+    fn test_track_creation() {
+        let track = Track::new(TrackKind::Video, "My Video Track");
+        assert_eq!(track.name, "My Video Track");
+        assert_eq!(track.kind, TrackKind::Video);
+        assert_eq!(track.volume, 1.0);
+        assert_eq!(track.muted, false);
+        assert_eq!(track.audio_clips.len(), 0);
+        assert_eq!(track.video_clips.len(), 0);
+        assert_eq!(track.image_clips.len(), 0);
+    }
+
+    #[test]
+    fn test_track_set_volume() {
+        let mut track = Track::new(TrackKind::Audio, "Audio Track");
+        
+        // Normal case
+        track.set_volume(0.5);
+        assert_eq!(track.volume, 0.5);
+        
+        // Edge case: max limit
+        track.set_volume(2.5);
+        assert_eq!(track.volume, 2.0);
+        
+        // Edge case: min limit
+        track.set_volume(-1.0);
+        assert_eq!(track.volume, 0.0);
+    }
+
+    #[test]
+    fn test_track_rename_and_mute() {
+        let mut track = Track::new(TrackKind::Audio, "Audio");
+        
+        track.rename("New Name");
+        assert_eq!(track.name, "New Name");
+        
+        assert_eq!(track.muted, false);
+        track.mute();
+        assert_eq!(track.muted, true);
+        track.unmute();
+        assert_eq!(track.muted, false);
+    }
+
+    #[test]
+    fn test_track_duration_secs() {
+        let mut track = Track::new(TrackKind::Video, "Mixed Track");
+        
+        assert_eq!(track.duration_secs(), 0.0);
+        
+        // Add video clip ending at 10.0
+        let mut v_clip = VideoClip::new("video", "v.mp4", 0.0);
+        v_clip.source_end = Some(10.0);
+        track.add_video_clip(v_clip);
+        assert_eq!(track.duration_secs(), 10.0);
+        
+        // Add audio clip ending at 15.0
+        let mut a_clip = AudioClip::new("audio", "a.wav", 5.0);
+        a_clip.source_end = Some(10.0); // duration = 10.0
+        track.add_audio_clip(a_clip); // ends at 5.0 + 10.0 = 15.0
+        assert_eq!(track.duration_secs(), 15.0);
+        
+        // Add image clip ending at 8.0
+        let i_clip = ImageClip::new("img", "img.png", 3.0, 5.0); // ends at 8.0
+        track.add_image_clip(i_clip);
+        assert_eq!(track.duration_secs(), 15.0); // max is still 15.0
+    }
+
+    #[test]
+    fn test_track_clip_management() {
+        let mut track = Track::new(TrackKind::Video, "Video Track");
+        
+        let clip = VideoClip::new("vid", "v.mp4", 0.0);
+        let id = track.add_video_clip(clip.clone());
+        
+        assert_eq!(track.video_clips.len(), 1);
+        
+        // Mutate clip
+        let mut_clip = track.video_clip_mut(id).unwrap();
+        mut_clip.name = "Renamed".to_string();
+        assert_eq!(track.video_clips[0].name, "Renamed");
+        
+        // Remove clip
+        assert!(track.remove_video_clip(id));
+        assert_eq!(track.video_clips.len(), 0);
+        
+        // Remove non-existent clip
+        assert!(!track.remove_video_clip(Uuid::new_v4()));
     }
 }

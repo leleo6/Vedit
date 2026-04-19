@@ -2,6 +2,7 @@ pub mod project;
 pub mod track;
 pub mod clip;
 pub mod audio;
+pub mod image;
 pub mod render;
 
 /// Helpers de presentación compartidos

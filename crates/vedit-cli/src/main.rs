@@ -9,6 +9,7 @@ use commands::{
     track::TrackCmd,
     clip::ClipCmd,
     audio::AudioCmd,
+    image::ImageCmd,
     render::RenderCmd,
 };
 
@@ -50,6 +51,10 @@ enum Commands {
     #[command(subcommand)]
     Audio(AudioCmd),
 
+    /// Operaciones de imagen (add, transform, fade, ken-burns)
+    #[command(subcommand)]
+    Image(ImageCmd),
+
     /// Renderizado del proyecto
     #[command(subcommand)]
     Render(RenderCmd),
@@ -74,6 +79,7 @@ async fn main() -> Result<()> {
         Commands::Track(cmd)   => commands::track::run(cmd).await,
         Commands::Clip(cmd)    => commands::clip::run(cmd).await,
         Commands::Audio(cmd)   => commands::audio::run(cmd).await,
+        Commands::Image(cmd)   => commands::image::run(cmd).await,
         Commands::Render(cmd)  => commands::render::run(cmd).await,
     }
 }
