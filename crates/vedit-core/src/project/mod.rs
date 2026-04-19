@@ -265,7 +265,7 @@ mod tests {
     fn test_manage_tracks() {
         let mut proj = Project::new("T");
         let id1 = proj.add_track(TrackKind::Audio, "Voice");
-        let id2 = proj.add_track(TrackKind::Video, "B-Roll");
+        let _id2 = proj.add_track(TrackKind::Video, "B-Roll");
         
         assert_eq!(proj.tracks.len(), 2);
         
