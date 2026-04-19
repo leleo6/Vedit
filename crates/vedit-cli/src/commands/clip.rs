@@ -144,7 +144,7 @@ pub async fn run(cmd: ClipCmd) -> Result<()> {
             let clip = project.track_mut(tid).unwrap()
                 .audio_clip_mut(clip_id)
                 .ok_or_else(|| anyhow::anyhow!("Clip {} no encontrado", clip_id))?;
-            clip.volume = volume.max(0.0).min(2.0);
+            clip.volume = volume.clamp(0.0, 2.0);
             project.save().await?;
             success(&format!("Volumen del clip {} ajustado a {:.2}", clip_id, volume));
         }

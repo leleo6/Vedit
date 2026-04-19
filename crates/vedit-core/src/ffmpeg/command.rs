@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use anyhow::{Context, Result};
 use tokio::process::Command;
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 /// Constructor fluent para comandos FFmpeg
 #[derive(Debug, Default)]
@@ -60,6 +62,12 @@ impl FfmpegCommand {
     pub fn audio_codec(&mut self, codec: &str) -> &mut Self {
         self.args.push("-c:a".into());
         self.args.push(codec.into());
+        self
+    }
+
+    pub fn output_format(&mut self, format: &str) -> &mut Self {
+        self.args.push("-f".into());
+        self.args.push(format.into());
         self
     }
 
@@ -131,6 +139,71 @@ impl FfmpegCommand {
                 status.code().unwrap_or(-1)
             );
         }
+        Ok(())
+    }
+
+    /// Ejecuta el comando ffmpeg capturando el progreso
+    pub async fn run_with_progress<F>(&self, total_duration_secs: f64, mut on_progress: F) -> Result<()> 
+    where 
+        F: FnMut(f64) + Send + 'static 
+    {
+        let mut args = self.build_args();
+        let total_duration_ms = (total_duration_secs * 1000.0) as i64;
+
+        // Insertar -progress pipe:1 antes del output
+        // Buscamos el último argumento (el output) para insertar justo antes
+        if !args.is_empty() {
+            let last_idx = args.len() - 1;
+            args.insert(last_idx, "-progress".into());
+            args.insert(last_idx + 1, "pipe:1".into());
+        } else {
+             args.push("-progress".into());
+             args.push("pipe:1".into());
+        }
+
+        let mut child = Command::new("ffmpeg")
+            .args(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("No se pudo ejecutar ffmpeg")?;
+
+        let stdout = child.stdout.take().unwrap();
+        let mut reader = BufReader::new(stdout).lines();
+
+        loop {
+            tokio::select! {
+                line = reader.next_line() => {
+                    if let Ok(Some(l)) = line {
+                    if let Some(stripped) = l.strip_prefix("out_time_ms=") {
+                            if let Ok(ms) = stripped.parse::<i64>() {
+                                if total_duration_ms > 0 {
+                                    let progress = (ms as f64 / total_duration_ms as f64).clamp(0.0, 1.0);
+                                    on_progress(progress);
+                                }
+                            }
+                        }
+                        if l == "progress=end" {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                status = child.wait() => {
+                    let status = status?;
+                    if !status.success() {
+                        anyhow::bail!("ffmpeg terminó con error: {}", status.code().unwrap_or(-1));
+                    }
+                    break;
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    let _ = child.kill().await;
+                    anyhow::bail!("Renderizado cancelado por el usuario.");
+                }
+            }
+        }
+
         Ok(())
     }
 }

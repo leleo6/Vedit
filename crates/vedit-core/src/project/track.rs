@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::project::clip::{AudioClip, VideoClip, ImageClip};
+use crate::project::clip::{AudioClip, VideoClip, ImageClip, TextClip};
 
 /// Tipo de track
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -9,6 +9,7 @@ pub enum TrackKind {
     Audio,
     Video,
     Image,
+    Text,
 }
 
 impl std::fmt::Display for TrackKind {
@@ -17,6 +18,7 @@ impl std::fmt::Display for TrackKind {
             TrackKind::Audio => write!(f, "audio"),
             TrackKind::Video => write!(f, "video"),
             TrackKind::Image => write!(f, "image"),
+            TrackKind::Text  => write!(f, "text"),
         }
     }
 }
@@ -37,6 +39,7 @@ pub struct Track {
     pub audio_clips: Vec<AudioClip>,
     pub video_clips: Vec<VideoClip>,
     pub image_clips: Vec<ImageClip>,
+    pub text_clips:  Vec<TextClip>,
 }
 
 impl Track {
@@ -52,6 +55,7 @@ impl Track {
             audio_clips: Vec::new(),
             video_clips: Vec::new(),
             image_clips: Vec::new(),
+            text_clips:  Vec::new(),
         }
     }
 
@@ -66,14 +70,17 @@ impl Track {
         let image_end = self.image_clips.iter()
             .map(|c| c.timeline_start + c.duration())
             .fold(0.0_f64, f64::max);
-        audio_end.max(video_end).max(image_end)
+        let text_end = self.text_clips.iter()
+            .map(|c| c.timeline_start + c.duration())
+            .fold(0.0_f64, f64::max);
+        audio_end.max(video_end).max(image_end).max(text_end)
     }
 
     pub fn mute(&mut self) { self.muted = true; }
     pub fn unmute(&mut self) { self.muted = false; }
 
     pub fn set_volume(&mut self, vol: f64) {
-        self.volume = vol.max(0.0).min(2.0);
+        self.volume = vol.clamp(0.0, 2.0);
     }
 
     pub fn rename(&mut self, name: impl Into<String>) {
@@ -129,6 +136,23 @@ impl Track {
 
     pub fn image_clip_mut(&mut self, id: Uuid) -> Option<&mut ImageClip> {
         self.image_clips.iter_mut().find(|c| c.id == id)
+    }
+
+    // ── Text clips ─────────────────────────────────────────────────────────
+    pub fn add_text_clip(&mut self, clip: TextClip) -> Uuid {
+        let id = clip.id;
+        self.text_clips.push(clip);
+        id
+    }
+
+    pub fn remove_text_clip(&mut self, id: Uuid) -> bool {
+        let before = self.text_clips.len();
+        self.text_clips.retain(|c| c.id != id);
+        self.text_clips.len() < before
+    }
+
+    pub fn text_clip_mut(&mut self, id: Uuid) -> Option<&mut TextClip> {
+        self.text_clips.iter_mut().find(|c| c.id == id)
     }
 }
 

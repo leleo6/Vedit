@@ -1,13 +1,17 @@
 use anyhow::Result;
 
 use crate::project::Project;
-use crate::project::clip::{ImageMode, KenBurnsEffect};
+use crate::project::clip::{ImageMode, KenBurnsEffect, TransitionKind};
 use crate::project::track::TrackKind;
 use crate::render::{AudioFormat, VideoFormat, RenderJob, RenderOutput};
 use crate::ffmpeg::command::FfmpegCommand;
+use crate::ffmpeg::escape_filter_arg;
 
 /// Compositor final: mezcla video + audio + imágenes y genera el output final
-pub async fn composite(job: &RenderJob, project: &Project) -> Result<RenderOutput> {
+pub async fn composite<F>(job: &RenderJob, project: &Project, on_progress: Option<F>) -> Result<RenderOutput> 
+where 
+    F: FnMut(f64) + Send + 'static 
+{
     tracing::info!("Compositor iniciado → {:?}", job.output_path);
 
     let mut cmd = FfmpegCommand::new();
@@ -15,6 +19,33 @@ pub async fn composite(job: &RenderJob, project: &Project) -> Result<RenderOutpu
 
     let (frame_w, frame_h) = (project.metadata.width, project.metadata.height);
     let total_duration = project.duration_secs();
+
+    let temp_dir = project.path.as_ref().and_then(|p| p.parent()).unwrap_or(std::path::Path::new(".")).join(".vedit_cache");
+    let _ = std::fs::create_dir_all(&temp_dir);
+
+    // Pre-procesar estabilización de video
+    for track in project.tracks.iter().filter(|t| !t.muted) {
+        for clip in &track.video_clips {
+            if clip.stabilize {
+                let trf_path = temp_dir.join(format!("{}_stab.trf", clip.id));
+                if !trf_path.exists() {
+                    tracing::info!("Analizando estabilización para {}", clip.name);
+                    let mut stab_cmd = FfmpegCommand::new();
+                    stab_cmd.hide_banner().overwrite();
+                    stab_cmd.input(&clip.source_path);
+                    if clip.source_start > 0.0 {
+                        stab_cmd.ss(clip.source_start);
+                    }
+                    if let Some(end) = clip.source_end {
+                        stab_cmd.to(end - clip.source_start);
+                    }
+                    stab_cmd.video_filter(format!("vidstabdetect=result='{}'", escape_filter_arg(&trf_path.to_string_lossy())));
+                    stab_cmd.output_format("null").output(std::path::Path::new("-"));
+                    let _ = stab_cmd.run().await;
+                }
+            }
+        }
+    }
 
     let mut complex_filters = Vec::new();
     // Generar un fondo negro base para todo el proyecto
@@ -30,23 +61,128 @@ pub async fn composite(job: &RenderJob, project: &Project) -> Result<RenderOutpu
             if let Some(end) = clip.source_end {
                 cmd.to(end - clip.source_start);
             }
-            
-            // Escalar video al tamaño del frame
+
+            let mut vf: Vec<String> = Vec::new();
+
+            // Reversa
+            if clip.reverse {
+                vf.push("reverse".to_string());
+            }
+            // Velocidad
+            if (clip.speed - 1.0).abs() > 0.001 {
+                vf.push(format!("setpts={:.6}*PTS", 1.0 / clip.speed));
+            }
+            // Crop
+            if let Some(ref c) = clip.crop {
+                vf.push(format!(
+                    "crop=iw-{}-{}:ih-{}-{}:{}:{}",
+                    c.left, c.right, c.top, c.bottom, c.left, c.top
+                ));
+            }
+            // Escalar al frame
+            let target_w = (frame_w as f64 * clip.scale.width ).round() as u32;
+            let target_h = (frame_h as f64 * clip.scale.height).round() as u32;
+            vf.push(format!("scale={}:{}", target_w, target_h));
+            // Flip
+            if clip.flip_horizontal { vf.push("hflip".to_string()); }
+            if clip.flip_vertical   { vf.push("vflip".to_string()); }
+            // Rotación
+            if clip.rotation_deg.abs() > 0.001 {
+                let rad = clip.rotation_deg * std::f64::consts::PI / 180.0;
+                vf.push(format!("rotate={:.6}:fillcolor=none", rad));
+            }
+            // Corrección de color
+            if clip.color.is_active() {
+                vf.push(format!(
+                    "eq=brightness={:.4}:contrast={:.4}:saturation={:.4}",
+                    clip.color.brightness, clip.color.contrast, clip.color.saturation
+                ));
+                if let Some(ref lut) = clip.color.lut_path {
+                    vf.push(format!("lut3d='{}'", escape_filter_arg(&lut.to_string_lossy())));
+                }
+            }
+            // Efectos visuales
+            if clip.effects.is_active() {
+                if let Some(r) = clip.effects.blur_radius {
+                    vf.push(format!("gblur=sigma={:.2}", r));
+                }
+                if let Some(s) = clip.effects.sharpen {
+                    vf.push(format!("unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount={:.2}", s));
+                }
+                if let Some(v) = clip.effects.vignette {
+                    let angle = v * std::f64::consts::PI / 2.0;
+                    vf.push(format!("vignette=angle={:.4}", angle));
+                }
+                if let Some(n) = clip.effects.noise {
+                    let noise_val = (n * 100.0) as u32;
+                    vf.push(format!("noise=alls={}:allf=t+u", noise_val));
+                }
+                if clip.effects.deinterlace {
+                    vf.push("yadif=mode=1".to_string());
+                }
+            }
+            // Fades
+            if let Some(ref fi) = clip.fade_in {
+                vf.push(format!("fade=t=in:st=0:d={:.3}", fi.duration_secs));
+            }
+            if let Some(ref fo) = clip.fade_out {
+                let clip_dur = clip.duration();
+                let fo_start = (clip_dur - fo.duration_secs).max(0.0);
+                vf.push(format!("fade=t=out:st={:.3}:d={:.3}", fo_start, fo.duration_secs));
+            }
+            // Transición de salida
+            if let Some(ref trans) = clip.transition_out {
+                let clip_dur = clip.duration();
+                let tr_start = (clip_dur - trans.duration_secs).max(0.0);
+                match trans.kind {
+                    TransitionKind::Cut => {}
+                    TransitionKind::FadeToBlack => {
+                        vf.push(format!("fade=t=out:st={:.3}:d={:.3}:color=black", tr_start, trans.duration_secs));
+                    }
+                    TransitionKind::FadeToWhite => {
+                        vf.push(format!("fade=t=out:st={:.3}:d={:.3}:color=white", tr_start, trans.duration_secs));
+                    }
+                    TransitionKind::CrossDissolve => {
+                        vf.push(format!("format=rgba,fade=t=out:st={:.3}:d={:.3}:alpha=1", tr_start, trans.duration_secs));
+                    }
+                    TransitionKind::WipeHorizontal => {
+                        vf.push(format!("crop=iw*max(0\\,1-(t-{:.3})/{:.3}):ih:0:0", tr_start, trans.duration_secs));
+                    }
+                    TransitionKind::WipeVertical => {
+                        vf.push(format!("crop=iw:ih*max(0\\,1-(t-{:.3})/{:.3}):0:0", tr_start, trans.duration_secs));
+                    }
+                }
+            }
+            // Estabilización
+            if clip.stabilize {
+                let trf_path = temp_dir.join(format!("{}_stab.trf", clip.id));
+                vf.push(format!("vidstabtransform=input='{}':optzoom=1:zoomspeed=0.25", escape_filter_arg(&trf_path.to_string_lossy())));
+            }
+
             let v_node = format!("v{}", input_idx);
-            complex_filters.push(format!("[{}:v]scale={}:{}[{}]", input_idx, frame_w, frame_h, v_node));
-            
+            let filter_chain = if vf.is_empty() {
+                format!("[{}:v]copy[{}]", input_idx, v_node)
+            } else {
+                format!("[{}:v]{}[{}]", input_idx, vf.join(","), v_node)
+            };
+            complex_filters.push(filter_chain);
+
             // Overlay sobre el fondo
+            let ox = (clip.position.x * frame_w as f64).round() as i64;
+            let oy = (clip.position.y * frame_h as f64).round() as i64;
+            let clip_end = clip.timeline_start + clip.duration();
             let next_bg = format!("bg{}", input_idx + 1);
             complex_filters.push(format!(
-                "[{}][{}]overlay=0:0:enable='between(t,{:.3},{:.3})'[{}]",
-                current_bg, v_node,
-                clip.timeline_start, clip.timeline_start + clip.duration(),
+                "[{}][{}]overlay={}:{}:enable='between(t,{:.3},{:.3})'[{}]",
+                current_bg, v_node, ox, oy,
+                clip.timeline_start, clip_end,
                 next_bg
             ));
             current_bg = next_bg;
             input_idx += 1;
         }
     }
+
 
     // ── Inputs: image clips ───────────────────────────────────────────────
     let mut image_tracks: Vec<_> = project
@@ -127,6 +263,26 @@ pub async fn composite(job: &RenderJob, project: &Project) -> Result<RenderOutpu
         }
     }
 
+    // ── Text clips ────────────────────────────────────────────────────────
+    
+    let mut text_tracks: Vec<_> = project
+        .tracks
+        .iter()
+        .filter(|t| t.kind == TrackKind::Text && !t.muted)
+        .collect();
+    text_tracks.sort_by_key(|t| t.layer_order);
+
+    for track in text_tracks {
+        for clip in &track.text_clips {
+            if let Ok(filter) = crate::render::text::build_drawtext_filter(clip, frame_w, frame_h, &temp_dir) {
+                let next_bg = format!("bg{}", input_idx + 1);
+                complex_filters.push(format!("[{}]{}[{}]", current_bg, filter, next_bg));
+                current_bg = next_bg;
+                input_idx += 1;
+            }
+        }
+    }
+
     // ── Audio clips (amix) ───────────────────────────────────────────────
     let mut audio_inputs = Vec::new();
     for track in project.tracks.iter().filter(|t| !t.muted) {
@@ -191,7 +347,19 @@ pub async fn composite(job: &RenderJob, project: &Project) -> Result<RenderOutpu
        .audio_codec(acodec)
        .output(&job.output_path);
 
-    cmd.run().await?;
+    // Si el job tiene una duración, la usamos para el progreso
+    cmd.raw_args(&["-t", &format!("{:.3}", total_duration)]);
+
+    let res = if let Some(cb) = on_progress {
+        cmd.run_with_progress(total_duration, cb).await
+    } else {
+        cmd.run().await
+    };
+    
+    // Limpieza de archivos de texto temporales
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    
+    res?;
 
     let size_bytes = std::fs::metadata(&job.output_path)
         .map(|m| m.len())

@@ -28,6 +28,16 @@ pub enum ProjectCmd {
         /// Ruta al archivo .vedit
         path: PathBuf,
     },
+    /// Deshace la última operación (Undo)
+    Undo {
+        /// Ruta al archivo .vedit
+        path: PathBuf,
+    },
+    /// Rehace la última operación deshecha (Redo)
+    Redo {
+        /// Ruta al archivo .vedit
+        path: PathBuf,
+    },
 }
 
 pub async fn run(cmd: ProjectCmd) -> Result<()> {
@@ -59,11 +69,29 @@ pub async fn run(cmd: ProjectCmd) -> Result<()> {
             let project = Project::load(&path).await?;
             print_project_info(&project, &path);
         }
+
+        ProjectCmd::Undo { path } => {
+            let mut project = Project::load(&path).await?;
+            if project.undo().await? {
+                success("Operación deshecha correctamente (Undo)");
+            } else {
+                println!("{} Nada que deshacer.", style("!").yellow());
+            }
+        }
+
+        ProjectCmd::Redo { path } => {
+            let mut project = Project::load(&path).await?;
+            if project.redo().await? {
+                success("Operación rehecha correctamente (Redo)");
+            } else {
+                println!("{} Nada que rehacer.", style("!").yellow());
+            }
+        }
     }
     Ok(())
 }
 
-fn print_project_info(project: &Project, path: &PathBuf) {
+fn print_project_info(project: &Project, path: &std::path::Path) {
     section("Información del proyecto");
     println!("  {} {}", style("Nombre:").dim(),    style(&project.metadata.name).white().bold());
     println!("  {} {}", style("ID:").dim(),         style(project.id).yellow());
