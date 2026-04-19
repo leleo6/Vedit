@@ -1,0 +1,8 @@
+[package]
+name = "vedit-gui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+vedit-core = { path = "../vedit-core" }
+anyhow = { workspace = true }
