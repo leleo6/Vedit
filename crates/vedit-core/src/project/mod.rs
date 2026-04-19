@@ -43,18 +43,25 @@ pub struct Project {
     pub tracks: Vec<Track>,
     #[serde(skip)]
     pub path: Option<PathBuf>,
+    #[serde(skip)]
+    pub history: crate::history::History,
+    #[serde(skip)]
+    pub previous_snapshot: Option<Box<Project>>,
 }
 
 impl Project {
     /// Crea un proyecto nuevo en memoria
     pub fn new(name: impl Into<String>) -> Self {
-        let mut meta = ProjectMetadata::default();
-        meta.name = name.into();
         Self {
             id: Uuid::new_v4(),
-            metadata: meta,
+            metadata: ProjectMetadata {
+                name: name.into(),
+                ..ProjectMetadata::default()
+            },
             tracks: Vec::new(),
             path: None,
+            history: Default::default(),
+            previous_snapshot: None,
         }
     }
 
@@ -110,11 +117,27 @@ impl Project {
         self.metadata.modified_at = Utc::now();
     }
 
+    fn history_path(project_path: &std::path::Path) -> PathBuf {
+        let mut path = project_path.to_path_buf();
+        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+        path.set_file_name(format!("{}.history", file_name));
+        path
+    }
+
     /// Carga proyecto desde disco
     pub async fn load(path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
         let mut proj = io::load_project(&path).await?;
-        proj.path = Some(path);
+        proj.path = Some(path.clone());
+        
+        let hist_path = Self::history_path(&path);
+        if let Ok(hist) = crate::history::History::load(&hist_path).await {
+            proj.history = hist;
+        }
+        
+        // Guardamos el estado actual como snapshot previo en caso de que sea modificado
+        proj.previous_snapshot = Some(Box::new(proj.clone()));
+        
         Ok(proj)
     }
 
@@ -122,7 +145,18 @@ impl Project {
     pub async fn save(&mut self) -> Result<()> {
         let path = self.path.clone().ok_or_else(|| anyhow::anyhow!("No hay path de guardado. Usa save_as."))?;
         self.touch();
-        io::save_project(self, &path).await
+        
+        // Registrar en historial si hay un snapshot previo y fue modificado
+        if let Some(prev) = self.previous_snapshot.take() {
+            self.history.push(&prev, "CLI command");
+        }
+        
+        io::save_project(self, &path).await?;
+        
+        let hist_path = Self::history_path(&path);
+        self.history.save(&hist_path).await?;
+        
+        Ok(())
     }
 
     /// Guarda el proyecto en un path específico
@@ -156,9 +190,63 @@ impl Project {
                     anyhow::bail!("Archivo fuente extraviado o eliminado: {:?}", clip.source_path);
                 }
             }
+            for clip in &track.text_clips {
+                if clip.text.trim().is_empty() {
+                    anyhow::bail!("Clip de texto vacío encontrado. Debes proveer algún contenido para el texto.");
+                }
+            }
         }
         
         Ok(())
+    }
+
+    pub async fn undo(&mut self) -> Result<bool> {
+        let current_path = self.path.clone();
+        let mut hist = std::mem::take(&mut self.history);
+        
+        if let Some(mut restored) = hist.undo(self) {
+            restored.path = current_path.clone();
+            restored.history = hist;
+            restored.previous_snapshot = None; // Prevenir push a historial en save()
+            
+            *self = restored;
+            
+            let path = current_path
+                .ok_or_else(|| anyhow::anyhow!("No se puede deshacer: el proyecto no ha sido guardado aún."))?;
+            io::save_project(self, &path).await?;
+            let hist_path = Self::history_path(&path);
+            self.history.save(&hist_path).await?;
+            
+            return Ok(true);
+        }
+        
+        // Si falló devolvemos el history
+        self.history = hist;
+        Ok(false)
+    }
+
+    pub async fn redo(&mut self) -> Result<bool> {
+        let current_path = self.path.clone();
+        let mut hist = std::mem::take(&mut self.history);
+        
+        if let Some(mut restored) = hist.redo(self) {
+            restored.path = current_path.clone();
+            restored.history = hist;
+            restored.previous_snapshot = None;
+            
+            *self = restored;
+            
+            let path = current_path
+                .ok_or_else(|| anyhow::anyhow!("No se puede rehacer: el proyecto no ha sido guardado aún."))?;
+            io::save_project(self, &path).await?;
+            let hist_path = Self::history_path(&path);
+            self.history.save(&hist_path).await?;
+            
+            return Ok(true);
+        }
+        
+        self.history = hist;
+        Ok(false)
     }
 }
 

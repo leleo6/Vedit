@@ -27,7 +27,7 @@ pub async fn probe_file(path: &Path) -> Result<ProbeResult> {
             "-v", "quiet",
             "-print_format", "json",
             "-show_streams",
-            path.to_str().unwrap_or_default(),
+            path.to_str().ok_or_else(|| anyhow::anyhow!("La ruta contiene caracteres no-UTF8: {:?}", path))?,
         ])
         .output()
         .await
