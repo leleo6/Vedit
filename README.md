@@ -1,5 +1,19 @@
-# Vedit — Video Editor CLI 🎬
- 
+<div align="center">
+
+```text
+ ██╗   ██╗███████╗██████╗ ██╗████████╗
+ ██║   ██║██╔════╝██╔══██╗██║╚══██╔══╝
+ ██║   ██║█████╗  ██║  ██║██║   ██║   
+ ╚██╗ ██╔╝██╔══╝  ██║  ██║██║   ██║   
+  ╚████╔╝ ███████╗██████╔╝██║   ██║   
+   ╚═══╝  ╚══════╝╚═════╝ ╚═╝   ╚═╝   
+```
+**Video Editor CLI 🎬**
+
+</div>
+
+---
+
 💎 **vedit** es un Editor de Video No Lineal (NLE) completo que corre 100% en tu terminal. Diseñado de forma modular utilizando Rust, Tokio y FFmpeg, te permite editar videos con múltiples capas de audio, video, imagen y texto mediante comandos estilo Git.
 
 A diferencia de los scripts declarativos o el uso puro de FFmpeg, **Vedit maneja estado (Stateful)**. Puedes abrir un proyecto, hacer `undo` (deshacer), `redo` (rehacer), alterar tracks de forma iterativa y renderizar el resultado final, sin jamás tener que lidiar con la arcana sintaxis de grafos de FFmpeg.

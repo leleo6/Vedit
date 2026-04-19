@@ -17,13 +17,21 @@ use commands::{
     cache::CacheCmd,
 };
 
-/// ╔══════════════════════════════════════╗
-/// ║         vedit — Video Editor CLI     ║
-/// ╚══════════════════════════════════════╝
+const BANNER: &str = r#"
+ ██╗   ██╗███████╗██████╗ ██╗████████╗
+ ██║   ██║██╔════╝██╔══██╗██║╚══██╔══╝
+ ██║   ██║█████╗  ██║  ██║██║   ██║   
+ ╚██╗ ██╔╝██╔══╝  ██║  ██║██║   ██║   
+  ╚████╔╝ ███████╗██████╔╝██║   ██║   
+   ╚═══╝  ╚══════╝╚═════╝ ╚═╝   ╚═╝   
+    Video Editor CLI (Stateful NLE)
+"#;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "vedit",
     version,
+    before_help = BANNER,
     about = "💎 vedit – Editor de video/audio por línea de comandos",
     long_about = "vedit te permite gestionar proyectos de video y audio,\nagregar tracks/clips, aplicar efectos y renderizar, todo desde la terminal.",
     propagate_version = true,
