@@ -15,7 +15,7 @@ pub enum TrackCmd {
         project: PathBuf,
         /// Nombre del track
         name: String,
-        /// Tipo de track: audio | video | image
+        /// Tipo de track: audio | video | image | text
         #[arg(short, long, default_value = "audio")]
         kind: String,
     },
@@ -168,7 +168,8 @@ fn parse_kind(s: &str) -> Result<TrackKind> {
         "audio" => Ok(TrackKind::Audio),
         "video" => Ok(TrackKind::Video),
         "image" => Ok(TrackKind::Image),
-        other   => anyhow::bail!("Tipo de track desconocido: '{}'. Usa: audio, video, image", other),
+        "text"  => Ok(TrackKind::Text),
+        other   => anyhow::bail!("Tipo de track desconocido: '{}'. Usa: audio, video, image, text", other),
     }
 }
 

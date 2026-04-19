@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod video;
+pub mod text;
 pub mod compositor;
 
 use serde::{Deserialize, Serialize};

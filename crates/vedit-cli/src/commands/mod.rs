@@ -3,7 +3,11 @@ pub mod track;
 pub mod clip;
 pub mod audio;
 pub mod image;
+pub mod video;
+pub mod text;
 pub mod render;
+pub mod history;
+pub mod cache;
 
 /// Helpers de presentación compartidos
 use console::style;
@@ -15,6 +19,10 @@ pub fn success(msg: &str) {
 
 pub fn warn(msg: &str) {
     eprintln!("{} {}", style("⚠").yellow().bold(), msg);
+}
+
+pub fn error(msg: &str) {
+    eprintln!("{} {}", style("✖").red().bold(), msg);
 }
 
 

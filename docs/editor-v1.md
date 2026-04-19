@@ -14,24 +14,33 @@ vedit/
     │       ├── project/               # Modelo de datos y serialización
     │       │   ├── mod.rs             # Project, ProjectMetadata
     │       │   ├── track.rs           # Track, TrackKind
-    │       │   ├── clip.rs            # AudioClip, VideoClip, ImageClip
+    │       │   ├── clip.rs            # AudioClip, VideoClip, ImageClip, TextClip
     │       │   └── io.rs              # I/O asíncrono para JSON (Tokio)
     │       │
     │       ├── tools/
     │       │   ├── mod.rs             # Tool trait
-    │       │   └── audio/
+    │       │   ├── audio/
+    │       │   │   ├── mod.rs
+    │       │   │   ├── add_track.rs
+    │       │   │   ├── add_clip.rs
+    │       │   │   ├── mix.rs
+    │       │   │   ├── mute.rs
+    │       │   │   ├── normalize.rs
+    │       │   │   └── fade.rs
+    │       │   ├── video/
+    │       │   ├── image/
+    │       │   └── text/
     │       │       ├── mod.rs
     │       │       ├── add_track.rs
     │       │       ├── add_clip.rs
-    │       │       ├── mix.rs
-    │       │       ├── mute.rs
-    │       │       ├── normalize.rs
-    │       │       └── fade.rs
+    │       │       ├── style.rs
+    │       │       └── subtitle.rs
     │       │
     │       ├── render/                # Renderización
     │       │   ├── mod.rs             # RenderJob, RenderOutput
     │       │   ├── audio.rs           # renderiza solo audio
-    │       │   ├── video.rs           # renderiza solo video
+    │       │   ├── video.rs           # renderiza video base
+    │       │   ├── text.rs            # renderiza solo texto (previews y filtros)
     │       │   └── compositor.rs      # mezcla todo, output final
     │       │
     │       ├── ffmpeg/                # Integración con FFmpeg subyacente
@@ -57,7 +66,10 @@ vedit/
     │           ├── track.rs           # add, remove, list
     │           ├── clip.rs            # add, remove, move
     │           ├── audio.rs           # mix, mute, normalize, fade
-    │           └── render.rs          # render con opciones
+    │           ├── video.rs           # add, transform, speed, color, effects, transition
+    │           ├── image.rs           # add, move, transform, mode
+    │           ├── text.rs            # add, style, position, import-srt
+    │           └── render.rs          # render con opciones (export-frame, text-preview)
     │
     └── vedit-gui/
         └── src/
@@ -76,6 +88,7 @@ vedit/
 ### Seguridad y Arquitectura Reciente
 - Migración a operaciones de I/O de archivos utilizando un modelo completamente asíncrono (Tokio) para prevenir el bloqueo del hilo principal.
 - Implementación de validaciones estrictas de integridad del proyecto (asegurando que los medios existen y que hay clips en la línea de tiempo) antes de ejecutar tareas intensivas de renderizado.
+- Sistema de Undo/Redo acotado en memoria a un stack máximo de 50 operaciones para prevenir _memory leaks_ en proyectos de alta complejidad.
 - Dependencia principal de delegación en **FFmpeg**, usando comandos eficientes desde Rust en lugar de bindings poco mantenidos de bibliotecas de terceros.
 
 ### Formatos Soportados (Salida)
@@ -122,7 +135,7 @@ vedit/
     - Render de solo archivo de sonido (only-audio render).
     - Mezclador final en contenedor multimedia (`video.rs` + `audio.rs` -> `compositor.rs`).
 
-### modulo imagen
+### Módulo de Imagen
 
 - **Gestión de tracks**
 
@@ -233,3 +246,104 @@ Recortar imagen (crop antes de colocarla)
 - Renderizar solo video (only video)
 - Renderizar video + audio como parte del compositor final
 - Exportar frame específico como imagen (screenshot)
+
+### Módulo de Texto / Subtítulos
+
+- **Gestión de tracks**
+
+- Crear track de texto con nombre y orden de capa
+- Eliminar track
+- Renombrar track
+- Reordenar tracks (prioridad visual)
+
+- **Gestión de clips de texto**
+
+- Agregar texto estático al timeline con posición y duración
+- Eliminar clip
+- Mover clip en el timeline
+- Ajustar duración del clip
+- Dividir clip en un punto del timeline
+
+- **Estilo**
+
+- Fuente (font family)
+- Tamaño de fuente
+- Color del texto
+- Color de fondo / caja detrás del texto (con opacidad)
+- Negrita, cursiva, subrayado
+- Alineación (izquierda, centro, derecha)
+- Interlineado y espaciado entre letras
+- Stroke (borde alrededor del texto con color y grosor)
+- Sombra (offset x, y, blur, color)
+
+- **Posicionamiento**
+
+- Posición en el frame (x, y) — coordenadas absolutas o presets (top-center, bottom-center, etc)
+- Margen desde los bordes
+- Rotación en grados
+
+- **Efectos por clip**
+
+- Fade in / fade out de opacidad
+- Animación de entrada: typewriter (letra por letra), slide, fade
+- Animación de salida: fade, slide
+
+- **Subtítulos**
+
+- Importar archivo .srt y convertirlo en clips de texto automáticamente
+- Importar archivo .vtt
+- Exportar clips de texto como .srt
+- Quemar subtítulos en el video (hardcode) — no se pueden quitar después
+- Subtítulos suaves (softcode) — se incrustan como stream separado en el archivo
+
+- **Render**
+
+- Renderizar texto como parte del compositor final
+- Preview de texto sin renderizar todo el proyecto
+
+### Módulo de Render
+
+- **Configuración de salida**
+
+- Resolución (1920x1080, 1280x720, 3840x2160, custom)
+- Aspect ratio (16:9, 9:16, 1:1, 4:3, custom)
+- FPS (24, 25, 30, 60, custom)
+- Codec de video (H.264, H.265/HEVC, VP9, AV1)
+- Codec de audio (AAC, MP3, FLAC, OGG)
+- Bitrate de video (auto o manual)
+- Bitrate de audio (auto o manual)
+- Formato de contenedor (mp4, mkv, mov)
+
+- **Modos de render**
+
+- only audio — exporta solo el mix de audio del proyecto
+- only video — exporta solo el video sin audio
+- only image — exporta slideshow de imágenes
+- video + audio — compositor completo, output final
+- frame — exporta un frame específico como imagen (jpg, png)
+
+- **Pipeline de render**
+
+- Validar proyecto antes de renderizar (clips faltantes, conflictos de timeline)
+- Construir grafo de filtros FFmpeg a partir de los tracks
+- Resolver orden de composición (capas de video, imagen, texto)
+- Mezclar todos los tracks de audio
+- Aplicar efectos en orden correcto
+- Manejar archivos temporales intermedios via cache/
+
+- **Progreso y control**
+
+- Progreso en tiempo real (frame actual / total, porcentaje, tiempo estimado)
+- Cancelar render en progreso
+- Pausar / reanudar render
+- Log de errores durante el render
+
+- **Optimización**
+
+- Renderizar solo el rango seleccionado (in/out points)
+- Render en paralelo de segmentos independientes
+- Preview rápido (baja calidad, resolución reducida)
+
+- **Presets**
+
+- Guardar configuración de render como preset reutilizable

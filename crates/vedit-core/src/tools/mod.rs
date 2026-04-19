@@ -1,5 +1,7 @@
 pub mod audio;
 pub mod image;
+pub mod video;
+pub mod text;
 
 use anyhow::Result;
 use crate::project::Project;

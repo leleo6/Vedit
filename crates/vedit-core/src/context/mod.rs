@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use crate::project::Project;
 
 /// Contexto de sesión activa del editor
@@ -6,7 +6,7 @@ use crate::project::Project;
 pub struct AppContext {
     /// Proyecto actualmente cargado
     pub project: Option<Project>,
-    /// Path del proyecto (redundante pero cómodo)
+    /// Path del proyecto
     pub project_path: Option<PathBuf>,
 }
 
@@ -15,7 +15,8 @@ impl AppContext {
         Self::default()
     }
 
-    pub async fn load_project(&mut self, path: PathBuf) -> anyhow::Result<()> {
+    pub async fn load_project(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
+        let path = path.as_ref().to_path_buf();
         let project = Project::load(&path).await?;
         self.project_path = Some(path);
         self.project = Some(project);

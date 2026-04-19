@@ -17,3 +17,10 @@ Thumbs.db
 # Project specific
 test_assets/*.mp3
 test_assets/*.vedit
+*.vedit
+*.srt
+*.mp4
+*.jpg
+*.png
+.vedit_cache/
+*.vedit.history

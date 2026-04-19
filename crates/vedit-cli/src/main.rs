@@ -10,7 +10,11 @@ use commands::{
     clip::ClipCmd,
     audio::AudioCmd,
     image::ImageCmd,
+    video::VideoCmd,
+    text::TextCmd,
     render::RenderCmd,
+    history::HistoryCmd,
+    cache::CacheCmd,
 };
 
 /// ╔══════════════════════════════════════╗
@@ -55,9 +59,25 @@ enum Commands {
     #[command(subcommand)]
     Image(ImageCmd),
 
+    /// Operaciones de video (add, transform, speed, color, effects, transition, stabilize)
+    #[command(subcommand)]
+    Video(VideoCmd),
+
+    /// Operaciones de texto y subtítulos (add, style, position, import-srt)
+    #[command(subcommand)]
+    Text(TextCmd),
+
     /// Renderizado del proyecto
     #[command(subcommand)]
     Render(RenderCmd),
+
+    /// Deshacer y rehacer cambios (Undo/Redo)
+    #[command(subcommand)]
+    History(HistoryCmd),
+
+    /// Gestión de archivos temporales y proxies
+    #[command(subcommand)]
+    Cache(CacheCmd),
 }
 
 #[tokio::main]
@@ -80,6 +100,10 @@ async fn main() -> Result<()> {
         Commands::Clip(cmd)    => commands::clip::run(cmd).await,
         Commands::Audio(cmd)   => commands::audio::run(cmd).await,
         Commands::Image(cmd)   => commands::image::run(cmd).await,
+        Commands::Video(cmd)   => commands::video::run(cmd).await,
+        Commands::Text(cmd)    => commands::text::run(cmd).await,
         Commands::Render(cmd)  => commands::render::run(cmd).await,
+        Commands::History(cmd) => commands::history::run(cmd).await,
+        Commands::Cache(cmd)   => commands::cache::run(cmd).await,
     }
 }
