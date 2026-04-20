@@ -4,7 +4,7 @@ use clap::Subcommand;
 use console::style;
 use uuid::Uuid;
 use vedit_core::project::{Project, clip::AudioClip};
-use super::{success, warn, section};
+use super::{success, warn, section, get_media_duration};
 
 #[derive(Subcommand, Debug)]
 pub enum ClipCmd {
@@ -96,7 +96,15 @@ pub async fn run(cmd: ClipCmd) -> Result<()> {
             let clip_name = name.unwrap_or_else(|| {
                 source.file_stem().and_then(|s| s.to_str()).unwrap_or("clip").to_string()
             });
-            let clip = AudioClip::new(&clip_name, &source, at);
+            let mut clip = AudioClip::new(&clip_name, &source, at);
+            
+            // Detectar duración automáticamente si ffprobe está disponible
+            if let Ok(dur) = get_media_duration(&source).await {
+                clip.source_end = Some(dur);
+            } else {
+                warn("No se pudo detectar la duración del archivo. Asegúrate de que ffprobe esté instalado.");
+            }
+
             let cid = clip.id;
             project.track_mut(tid).unwrap().add_audio_clip(clip);
             project.save().await?;
@@ -177,11 +185,27 @@ pub async fn run(cmd: ClipCmd) -> Result<()> {
             let t = project.track(tid).unwrap();
             section(&format!("Clips del track '{}'", t.name));
 
-            if t.audio_clips.is_empty() && t.video_clips.is_empty() {
+            if t.audio_clips.is_empty() && t.video_clips.is_empty() && t.image_clips.is_empty() && t.text_clips.is_empty() {
                 println!("  {} No hay clips en este track.", style("ℹ").blue());
                 return Ok(());
             }
 
+            // Video Clips
+            for clip in &t.video_clips {
+                println!(
+                    "  {} {} @{:.2}s [dur: {:.2}s] speed={:.2}x{}",
+                    style("🎬").cyan(),
+                    style(&clip.name).white().bold(),
+                    clip.timeline_start,
+                    clip.duration(),
+                    clip.speed,
+                    if clip.reverse { " ⟵rev" } else { "" },
+                );
+                println!("    {} {}", style("id:").dim(),  style(clip.id).dim());
+                println!("    {} {}", style("src:").dim(), clip.source_path.display());
+            }
+
+            // Audio Clips
             for clip in &t.audio_clips {
                 let end = clip.source_end.map(|e| format!("{:.2}s", e)).unwrap_or("∞".into());
                 println!(
@@ -197,6 +221,40 @@ pub async fn run(cmd: ClipCmd) -> Result<()> {
                 );
                 println!("    {} {}", style("id:").dim(), style(clip.id).dim());
                 println!("    {} {}", style("src:").dim(), clip.source_path.display());
+            }
+
+            // Image Clips
+            for clip in &t.image_clips {
+                println!(
+                    "  {} {} @{:.2}s [dur: {:.2}s] mode={} opac={:.2}",
+                    style("🖼").cyan(),
+                    style(&clip.name).white().bold(),
+                    clip.timeline_start,
+                    clip.duration_secs,
+                    clip.mode,
+                    clip.opacity,
+                );
+                println!("    {} {}", style("id:").dim(), style(clip.id).dim());
+                println!("    {} {}", style("src:").dim(), clip.source_path.display());
+            }
+
+            // Text Clips
+            for clip in &t.text_clips {
+                let text_preview = if clip.text.len() > 30 {
+                    format!("{}...", &clip.text[..30].replace("\n", " "))
+                } else {
+                    clip.text.replace("\n", " ")
+                };
+
+                println!(
+                    "  {} {} @{:.2}s [dur: {:.2}s] \"{}\"",
+                    style("T").cyan(),
+                    style(&clip.name).white().bold(),
+                    clip.timeline_start,
+                    clip.duration(),
+                    style(text_preview).yellow()
+                );
+                println!("    {} {}", style("id:").dim(),  style(clip.id).dim());
             }
         }
     }

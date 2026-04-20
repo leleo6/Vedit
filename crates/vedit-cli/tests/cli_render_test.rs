@@ -8,7 +8,7 @@ fn test_cli_render_workflow() -> Result<(), Box<dyn std::error::Error>> {
     let proj_dir = temp.path().join("render_test");
     fs::create_dir_all(&proj_dir)?;
 
-    let proj_file = proj_dir.join("test_render.vedit");
+    let proj_file = proj_dir.join("test_render");
     let image_file = proj_dir.join("dummy.png");
     let output_file = proj_dir.join("output.mp4");
 

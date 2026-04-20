@@ -48,8 +48,8 @@ where
     }
 
     let mut complex_filters = Vec::new();
-    // Generar un fondo negro base para todo el proyecto
-    complex_filters.push(format!("color=c=black:s={}x{}:d={:.3}[bg0]", frame_w, frame_h, total_duration));
+    // Fondo base (negro)
+    complex_filters.push(format!("color=c=black:s={}x{}:d={:.3}:r={}[bg0]", frame_w, frame_h, total_duration, project.metadata.fps));
 
     let mut input_idx = 0;
     let mut current_bg = "bg0".to_string();
@@ -159,9 +159,12 @@ where
                 vf.push(format!("vidstabtransform=input='{}':optzoom=1:zoomspeed=0.25", escape_filter_arg(&trf_path.to_string_lossy())));
             }
 
+            // Sincronización de tiempo (PTS)
+            vf.push(format!("setpts=PTS-STARTPTS+{:.3}/TB", clip.timeline_start));
+
             let v_node = format!("v{}", input_idx);
             let filter_chain = if vf.is_empty() {
-                format!("[{}:v]copy[{}]", input_idx, v_node)
+                format!("[{}:v]null[{}]", input_idx, v_node)
             } else {
                 format!("[{}:v]{}[{}]", input_idx, vf.join(","), v_node)
             };
@@ -173,7 +176,7 @@ where
             let clip_end = clip.timeline_start + clip.duration();
             let next_bg = format!("bg{}", input_idx + 1);
             complex_filters.push(format!(
-                "[{}][{}]overlay={}:{}:enable='between(t,{:.3},{:.3})'[{}]",
+                "[{}][{}]overlay={}:{}:enable='between(t,{:.3},{:.3})':eof_action=pass[{}]",
                 current_bg, v_node, ox, oy,
                 clip.timeline_start, clip_end,
                 next_bg
@@ -182,7 +185,6 @@ where
             input_idx += 1;
         }
     }
-
 
     // ── Inputs: image clips ───────────────────────────────────────────────
     let mut image_tracks: Vec<_> = project
@@ -228,10 +230,13 @@ where
             if let Some(ref anim) = clip.entry_animation {
                 vf_parts.push(build_entry_animation_filter(anim, target_w, target_h));
             }
+            
+            // Sincronización de tiempo (PTS)
+            vf_parts.push(format!("setpts=PTS-STARTPTS+{:.3}/TB", clip.timeline_start));
 
             let img_node = format!("img{}", input_idx);
             let filter_chain = if vf_parts.is_empty() {
-                format!("[{}:v]copy[{}]", input_idx, img_node)
+                format!("[{}:v]null[{}]", input_idx, img_node)
             } else {
                 format!("[{}:v]{}[{}]", input_idx, vf_parts.join(","), img_node)
             };
@@ -243,7 +248,7 @@ where
             match clip.mode {
                 ImageMode::Background | ImageMode::Fullscreen => {
                     complex_filters.push(format!(
-                        "[{}][{}]overlay=0:0:enable='between(t,{:.3},{:.3})'[{}]",
+                        "[{}][{}]overlay=0:0:enable='between(t,{:.3},{:.3})':eof_action=pass[{}]",
                         current_bg, img_node,
                         clip.timeline_start, clip.timeline_start + clip.duration_secs,
                         next_bg
@@ -251,7 +256,7 @@ where
                 }
                 ImageMode::Overlay => {
                     complex_filters.push(format!(
-                        "[{}][{}]overlay={}:{}:enable='between(t,{:.3},{:.3})'[{}]",
+                        "[{}][{}]overlay={}:{}:enable='between(t,{:.3},{:.3})':eof_action=pass[{}]",
                         current_bg, img_node, ox, oy,
                         clip.timeline_start, clip.timeline_start + clip.duration_secs,
                         next_bg
@@ -263,7 +268,7 @@ where
         }
     }
 
-    // ── Text clips ────────────────────────────────────────────────────────
+    // ── Text clips (no añaden inputs, usan drawtext sobre el background actual) ──────────
     
     let mut text_tracks: Vec<_> = project
         .tracks
@@ -272,13 +277,14 @@ where
         .collect();
     text_tracks.sort_by_key(|t| t.layer_order);
 
+    let mut text_node_idx = 0;
     for track in text_tracks {
         for clip in &track.text_clips {
             if let Ok(filter) = crate::render::text::build_drawtext_filter(clip, frame_w, frame_h, &temp_dir) {
-                let next_bg = format!("bg{}", input_idx + 1);
+                let next_bg = format!("txt_bg{}", text_node_idx);
                 complex_filters.push(format!("[{}]{}[{}]", current_bg, filter, next_bg));
                 current_bg = next_bg;
-                input_idx += 1;
+                text_node_idx += 1;
             }
         }
     }
@@ -329,37 +335,45 @@ where
     }
 
     // ── Codecs de salida ──────────────────────────────────────────────────
-    let vcodec = match &job.video_format {
-        Some(VideoFormat::Mp4) | None => "libx264",
-        Some(VideoFormat::Mkv)        => "libx265",
-        Some(VideoFormat::Mov)        => "prores",
-    };
-
-    let acodec = match &job.audio_format {
-        Some(AudioFormat::Mp3)        => "libmp3lame",
-        Some(AudioFormat::Aac) | None => "aac",
-        Some(AudioFormat::Wav)        => "pcm_s16le",
-        Some(AudioFormat::Flac)       => "flac",
-        Some(AudioFormat::Ogg)        => "libvorbis",
-    };
-
-    cmd.video_codec(vcodec)
-       .audio_codec(acodec)
-       .output(&job.output_path);
-
-    // Si el job tiene una duración, la usamos para el progreso
-    cmd.raw_args(&["-t", &format!("{:.3}", total_duration)]);
-
-    let res = if let Some(cb) = on_progress {
-        cmd.run_with_progress(total_duration, cb).await
+    if job.is_live_preview {
+        cmd.raw_args(&["-f", "nut"])
+           .video_codec("rawvideo")
+           .audio_codec("pcm_s16le")
+           .output(std::path::Path::new("-"));
+           
+        cmd.run_piped_to_ffplay().await?;
     } else {
-        cmd.run().await
-    };
+        let vcodec = match &job.video_format {
+            Some(VideoFormat::Mp4) | None => "libx264",
+            Some(VideoFormat::Mkv)        => "libx265",
+            Some(VideoFormat::Mov)        => "prores",
+        };
+
+        let acodec = match &job.audio_format {
+            Some(AudioFormat::Mp3)        => "libmp3lame",
+            Some(AudioFormat::Aac) | None => "aac",
+            Some(AudioFormat::Wav)        => "pcm_s16le",
+            Some(AudioFormat::Flac)       => "flac",
+            Some(AudioFormat::Ogg)        => "libvorbis",
+        };
+
+        cmd.video_codec(vcodec)
+           .audio_codec(acodec)
+           .output(&job.output_path);
+
+        // Si el job tiene una duración, la usamos para el progreso
+        cmd.raw_args(&["-t", &format!("{:.3}", total_duration)]);
+
+        let res = if let Some(cb) = on_progress {
+            cmd.run_with_progress(total_duration, cb).await
+        } else {
+            cmd.run().await
+        };
+        res?;
+    }
     
     // Limpieza de archivos de texto temporales
     let _ = std::fs::remove_dir_all(&temp_dir);
-    
-    res?;
 
     let size_bytes = std::fs::metadata(&job.output_path)
         .map(|m| m.len())

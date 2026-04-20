@@ -124,9 +124,25 @@ impl Project {
         path
     }
 
-    /// Carga proyecto desde disco
+    /// Carga proyecto desde disco. Soporta archivo .vedit o carpeta de proyecto con .vedit/
     pub async fn load(path: impl Into<PathBuf>) -> Result<Self> {
-        let path = path.into();
+        let mut path = path.into();
+        
+        // Si el path es un directorio, buscamos el archivo de gestión oculto
+        if path.is_dir() {
+            let hidden_dir = path.join(".vedit");
+            if hidden_dir.is_dir() {
+                path = hidden_dir.join("project.json");
+            } else {
+                let legacy_path = path.join("project.vedit");
+                if legacy_path.exists() {
+                    path = legacy_path;
+                } else {
+                    anyhow::bail!("No se encontró un proyecto válido en el directorio: {:?}", path);
+                }
+            }
+        }
+
         let mut proj = io::load_project(&path).await?;
         proj.path = Some(path.clone());
         
@@ -135,7 +151,7 @@ impl Project {
             proj.history = hist;
         }
         
-        // Guardamos el estado actual como snapshot previo en caso de que sea modificado
+        // Guardamos el estado actual como snapshot previo
         proj.previous_snapshot = Some(Box::new(proj.clone()));
         
         Ok(proj)
@@ -161,7 +177,21 @@ impl Project {
 
     /// Guarda el proyecto en un path específico
     pub async fn save_as(&mut self, path: impl Into<PathBuf>) -> Result<()> {
-        let path = path.into();
+        let mut path = path.into();
+        
+        // Si el path no tiene extensión y queremos usar el enfoque de carpeta
+        if path.extension().is_none() {
+            std::fs::create_dir_all(&path)?;
+            let hidden_dir = path.join(".vedit");
+            std::fs::create_dir_all(&hidden_dir)?;
+            path = hidden_dir.join("project.json");
+        } else {
+            // Asegurarse de que el directorio padre existe
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+
         self.touch();
         io::save_project(self, &path).await?;
         self.path = Some(path);

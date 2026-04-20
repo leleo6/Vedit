@@ -5,7 +5,7 @@ use uuid::Uuid;
 use console::style;
 use vedit_core::project::Project;
 use vedit_core::project::clip::{TransitionKind, VideoCrop};
-use super::{success, section};
+use super::{success, section, get_media_duration, warn};
 
 // ── Enums CLI ────────────────────────────────────────────────────────────────
 
@@ -269,6 +269,13 @@ pub async fn run(cmd: VideoCmd) -> Result<()> {
             let mut clip = VideoClip::new(&clip_name, &source, at);
             if let Some(dur) = duration {
                 clip.source_end = Some(clip.source_start + dur);
+            } else {
+                // Detectar duración automáticamente si ffprobe está disponible
+                if let Ok(dur) = get_media_duration(&source).await {
+                    clip.source_end = Some(clip.source_start + dur);
+                } else {
+                    warn("No se pudo detectar la duración del video. Asegúrate de que ffprobe esté instalado o especifica --duration.");
+                }
             }
             let cid = clip.id;
             project.track_mut(tid).unwrap().add_video_clip(clip);

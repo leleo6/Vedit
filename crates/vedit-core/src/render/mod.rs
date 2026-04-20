@@ -75,6 +75,7 @@ pub struct RenderJob {
     pub video_format: Option<VideoFormat>,
     pub audio_format: Option<AudioFormat>,
     pub aspect: Option<AspectRatio>,
+    pub is_live_preview: bool,
 }
 
 /// Resultado del renderizado

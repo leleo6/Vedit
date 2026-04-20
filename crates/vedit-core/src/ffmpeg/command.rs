@@ -125,7 +125,7 @@ impl FfmpegCommand {
     /// Ejecuta el comando ffmpeg de forma asíncrona
     pub async fn run(&self) -> Result<()> {
         let args = self.build_args();
-        tracing::debug!("ffmpeg {}", args.join(" "));
+        tracing::info!("ffmpeg {}", args.join(" "));
 
         let status = Command::new("ffmpeg")
             .args(&args)
@@ -160,6 +160,8 @@ impl FfmpegCommand {
              args.push("-progress".into());
              args.push("pipe:1".into());
         }
+
+        tracing::info!("ffmpeg {}", args.join(" "));
 
         let mut child = Command::new("ffmpeg")
             .args(&args)
@@ -204,6 +206,42 @@ impl FfmpegCommand {
             }
         }
 
+        let status = child.wait().await?;
+        if !status.success() {
+            anyhow::bail!("ffmpeg terminó con error: {}", status.code().unwrap_or(-1));
+        }
+
+        Ok(())
+    }
+
+    /// Ejecuta FFmpeg pero envía el stdout a FFplay para preview en tiempo real
+    pub async fn run_piped_to_ffplay(&self) -> Result<()> {
+        let args = self.build_args();
+        
+        let mut ffmpeg_child = Command::new("ffmpeg")
+            .args(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("No se pudo ejecutar ffmpeg para preview")?;
+
+        let stdout = ffmpeg_child.stdout.take().unwrap();
+
+        let stdio: std::process::Stdio = stdout.try_into().unwrap();
+
+        let mut ffplay_child = Command::new("ffplay")
+            .args(&["-i", "-", "-autoexit", "-window_title", "Vedit Live Preview", "-loglevel", "error"])
+            .stdin(stdio)
+            .spawn()
+            .context("No se pudo ejecutar ffplay para preview")?;
+
+        let status = ffplay_child.wait().await?;
+        let _ = ffmpeg_child.kill().await; // Kill ffmpeg if ffplay is closed
+        
+        if !status.success() {
+            anyhow::bail!("FFplay preview cerrado o falló.");
+        }
+        
         Ok(())
     }
 }

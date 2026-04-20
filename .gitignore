@@ -15,12 +15,7 @@ target/
 Thumbs.db
 
 # Project specific
-test_assets/*.mp3
-test_assets/*.vedit
-*.vedit
-*.srt
-*.mp4
-*.jpg
-*.png
+**/.vedit/
 .vedit_cache/
+**/temp_render_*/
 *.vedit.history

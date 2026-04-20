@@ -90,6 +90,9 @@ pub enum RenderCmd {
         /// Usa un preset guardado para los ajustes de renderizado
         #[arg(long)]
         preset: Option<String>,
+        /// Sobrescribir el archivo de salida si ya existe
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
     /// Exporta únicamente el audio del proyecto
     Audio {
@@ -100,6 +103,9 @@ pub enum RenderCmd {
         /// Formato de audio: mp3, wav, aac, flac, ogg
         #[arg(long, value_enum, default_value = "mp3")]
         format: CliAudioFormat,
+        /// Sobrescribir el archivo de salida si ya existe
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
     /// Renderiza únicamente el video (sin audio)
     Video {
@@ -111,6 +117,9 @@ pub enum RenderCmd {
         format: CliVideoFormat,
         #[arg(long, value_enum, default_value = "16:9")]
         aspect: CliAspect,
+        /// Sobrescribir el archivo de salida si ya existe
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
     /// Exporta un frame específico como imagen (screenshot)
     ExportFrame {
@@ -122,6 +131,9 @@ pub enum RenderCmd {
         /// Instante del timeline en segundos
         #[arg(long)]
         at: f64,
+        /// Sobrescribir el archivo de salida si ya existe
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
     /// Renderiza un preview rápido solo del texto/subtítulos sobre fondo negro
     TextPreview {
@@ -131,6 +143,16 @@ pub enum RenderCmd {
         output: PathBuf,
         #[arg(long, value_enum, default_value = "mp4")]
         format: CliVideoFormat,
+        #[arg(long, value_enum, default_value = "16:9")]
+        aspect: CliAspect,
+        /// Sobrescribir el archivo de salida si ya existe
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
+    /// Reproduce el proyecto en vivo usando ffplay
+    LivePreview {
+        #[arg(short, long)]
+        project: PathBuf,
         #[arg(long, value_enum, default_value = "16:9")]
         aspect: CliAspect,
     },
@@ -168,7 +190,10 @@ pub struct RenderPreset {
 
 pub async fn run(cmd: RenderCmd) -> Result<()> {
     match cmd {
-        RenderCmd::Full { project: proj_path, output, format, audio, aspect, preset } => {
+        RenderCmd::Full { project: proj_path, output, format, audio, aspect, preset, force } => {
+            if output.exists() && !force {
+                anyhow::bail!("El archivo de salida ya existe: {:?}. Usa --force para sobrescribir.", output);
+            }
             let mut format = format;
             let mut audio = audio;
             let mut aspect = aspect;
@@ -216,6 +241,7 @@ pub async fn run(cmd: RenderCmd) -> Result<()> {
                 video_format: Some(vfmt),
                 audio_format: Some(afmt),
                 aspect: Some(asp),
+                is_live_preview: false,
             };
 
             let result = render::compositor::composite(&job, &project, Some(on_progress)).await?;
@@ -224,7 +250,10 @@ pub async fn run(cmd: RenderCmd) -> Result<()> {
             print_render_result(result);
         }
 
-        RenderCmd::Audio { project: proj_path, output, format } => {
+        RenderCmd::Audio { project: proj_path, output, format, force } => {
+            if output.exists() && !force {
+                anyhow::bail!("El archivo de salida ya existe: {:?}. Usa --force para sobrescribir.", output);
+            }
             let project = Project::load(&proj_path).await?;
             project.validate_for_render()?;
             let afmt: AudioFormat = format.into();
@@ -239,7 +268,10 @@ pub async fn run(cmd: RenderCmd) -> Result<()> {
             success(&format!("Audio exportado → {}", output.display()));
         }
 
-        RenderCmd::Video { project: proj_path, output, format, aspect } => {
+        RenderCmd::Video { project: proj_path, output, format, aspect, force } => {
+            if output.exists() && !force {
+                anyhow::bail!("El archivo de salida ya existe: {:?}. Usa --force para sobrescribir.", output);
+            }
             let project = Project::load(&proj_path).await?;
             project.validate_for_render()?;
             let vfmt: VideoFormat = format.into();
@@ -257,7 +289,10 @@ pub async fn run(cmd: RenderCmd) -> Result<()> {
             success(&format!("Video exportado → {}", output.display()));
         }
 
-        RenderCmd::ExportFrame { project: proj_path, output, at } => {
+        RenderCmd::ExportFrame { project: proj_path, output, at, force } => {
+            if output.exists() && !force {
+                anyhow::bail!("El archivo de salida ya existe: {:?}. Usa --force para sobrescribir.", output);
+            }
             let project = Project::load(&proj_path).await?;
             project.validate_for_render()?;
 
@@ -271,7 +306,10 @@ pub async fn run(cmd: RenderCmd) -> Result<()> {
             success(&format!("Frame exportado → {}", output.display()));
         }
 
-        RenderCmd::TextPreview { project: proj_path, output, format, aspect } => {
+        RenderCmd::TextPreview { project: proj_path, output, format, aspect, force } => {
+            if output.exists() && !force {
+                anyhow::bail!("El archivo de salida ya existe: {:?}. Usa --force para sobrescribir.", output);
+            }
             let project = Project::load(&proj_path).await?;
             project.validate_for_render()?;
             let vfmt: VideoFormat = format.into();
@@ -287,6 +325,31 @@ pub async fn run(cmd: RenderCmd) -> Result<()> {
             pb.finish_and_clear();
             success(&format!("Preview exportado → {}", output.display()));
         }
+
+        RenderCmd::LivePreview { project: proj_path, aspect } => {
+            let project = Project::load(&proj_path).await?;
+            project.validate_for_render()?;
+            let asp: AspectRatio = aspect.into();
+
+            section("Live Preview 🔴");
+            println!("  Iniciando FFplay pipeline...");
+            println!("  (Cierra la ventana de FFplay para detener)");
+
+            let job = RenderJob {
+                project_path: proj_path,
+                output_path: PathBuf::from("-"),
+                audio_only: false,
+                video_format: None,
+                audio_format: None,
+                aspect: Some(asp),
+                is_live_preview: true,
+            };
+
+            // Dummy callback for progress (not shown in terminal since it streams to ffplay directly)
+            let _ = render::compositor::composite(&job, &project, None::<fn(f64)>).await?;
+            success("Preview finalizado.");
+        }
+
         RenderCmd::Preset { action } => match action {
             PresetAction::Save { name, format, audio, aspect } => {
                 let preset = RenderPreset { format, audio, aspect };

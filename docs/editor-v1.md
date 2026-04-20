@@ -99,7 +99,7 @@ vedit/
 ### Formatos Soportados (Entrada)
 - Video: `MP4`, `MKV`, `MOV`, `AVI`, `WEBM`
 - Audio: `MP3`, `WAV`, `AAC`, `FLAC`, `OGG`, `M4A`
-- Imágenes (opcional): `PNG`, `JPG`
+- Imágenes : `PNG`, `JPG`
 
 ### Capacidades del Módulo de Audio
 - **Gestión de Tracks**

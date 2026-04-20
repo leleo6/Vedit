@@ -46,17 +46,18 @@ pub async fn run(cmd: ProjectCmd) -> Result<()> {
             let mut project = Project::new(&name);
             project.metadata.fps = fps;
 
-            // Crear el archivo .vedit
-            let filename = format!("{}.vedit", name.replace(' ', "_").to_lowercase());
-            let path = output.join(&filename);
+            // Creamos una carpeta para el proyecto (enfoque de gestión oculta)
+            let project_dir = output.join(&name.replace(' ', "_").to_lowercase());
+            
+            // save_as ahora manejará la creación de la carpeta .vedit interna
+            project.save_as(&project_dir).await?;
 
-            project.save_as(&path).await?;
-
-            section("Nuevo proyecto creado");
+            section("Nuevo proyecto creado (Estructura de gestión)");
             println!("  {} {}", style("Nombre:").dim(), style(&name).white().bold());
             println!("  {} {}", style("FPS:").dim(), style(fps).white());
-            println!("  {} {}", style("Archivo:").dim(), style(path.display()).cyan());
-            success(&format!("Proyecto '{}' creado exitosamente", name));
+            println!("  {} {}", style("Carpeta:").dim(), style(project_dir.display()).cyan());
+            println!("  {} {}", style("Metadatos:").dim(), style(".vedit/project.json").dim());
+            success(&format!("Proyecto '{}' inicializado exitosamente", name));
         }
 
         ProjectCmd::Open { path } => {

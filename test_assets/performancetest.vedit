@@ -1,0 +1,40 @@
+{
+  "id": "f8623b57-5e0a-485a-9ca8-4ed1c6f0e692",
+  "metadata": {
+    "name": "performancetest",
+    "fps": 30.0,
+    "width": 1920,
+    "height": 1080,
+    "sample_rate": 44100,
+    "created_at": "2026-04-18T07:26:04.751709592Z",
+    "modified_at": "2026-04-18T07:26:04.994389220Z"
+  },
+  "tracks": [
+    {
+      "id": "4e1e74bf-4ed0-44b9-81cd-497306470f4a",
+      "name": "TrackAudio1",
+      "kind": "audio",
+      "volume": 1.0,
+      "muted": false,
+      "order": 0,
+      "audio_clips": [
+        {
+          "id": "54152864-ce20-4aa0-805f-9b3293e3e55a",
+          "name": "-03-2",
+          "source_path": "/home/leo/Documents/proyects/cli/-03-2.mp3",
+          "source_start": 0.0,
+          "source_end": null,
+          "timeline_start": 0.0,
+          "volume": 1.0,
+          "loop_count": 1,
+          "speed": 1.0,
+          "fade_in": null,
+          "fade_out": null,
+          "mute_ranges": []
+        }
+      ],
+      "video_clips": [],
+      "image_clips": []
+    }
+  ]
+}

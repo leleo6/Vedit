@@ -6,7 +6,7 @@ use tempfile::tempdir;
 fn test_cli_project_workflow() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = tempdir()?;
     let output_dir = temp_dir.path();
-    let proj_path = output_dir.join("test_proj.vedit");
+    let proj_path = output_dir.join("test_proj");
 
     // 1. Create project
     let mut cmd = Command::cargo_bin("vedit")?;

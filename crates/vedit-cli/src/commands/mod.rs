@@ -43,4 +43,25 @@ pub fn spinner(msg: &str) -> ProgressBar {
     pb
 }
 
+/// Obtiene la duración de un archivo multimedia usando ffprobe
+pub async fn get_media_duration(path: &std::path::Path) -> Result<f64, anyhow::Error> {
+    let output = tokio::process::Command::new("ffprobe")
+        .args(&[
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(path)
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        anyhow::bail!("ffprobe falló al procesar el archivo: {:?}", path);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let dur: f64 = stdout.trim().parse().map_err(|_| anyhow::anyhow!("No se pudo parsear la duración de ffprobe"))?;
+    Ok(dur)
+}
+
 

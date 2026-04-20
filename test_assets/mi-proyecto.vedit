@@ -1,0 +1,25 @@
+{
+  "id": "984c48c1-98b8-4461-88a1-ebfeb08b1f68",
+  "metadata": {
+    "name": "mi-proyecto",
+    "fps": 30.0,
+    "width": 1920,
+    "height": 1080,
+    "sample_rate": 44100,
+    "created_at": "2026-04-18T06:44:33.584644070Z",
+    "modified_at": "2026-04-18T06:44:46.436969677Z"
+  },
+  "tracks": [
+    {
+      "id": "4840450f-3bed-4d4f-863c-4a119d4ea91b",
+      "name": "mipista",
+      "kind": "audio",
+      "volume": 1.0,
+      "muted": false,
+      "order": 0,
+      "audio_clips": [],
+      "video_clips": [],
+      "image_clips": []
+    }
+  ]
+}
