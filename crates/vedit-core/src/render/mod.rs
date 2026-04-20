@@ -2,9 +2,11 @@ pub mod audio;
 pub mod video;
 pub mod text;
 pub mod compositor;
+pub(crate) mod filter_chain;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use crate::motion::{MovementFormula, RenderRegion};
 
 /// Formatos de salida de video
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +78,11 @@ pub struct RenderJob {
     pub audio_format: Option<AudioFormat>,
     pub aspect: Option<AspectRatio>,
     pub is_live_preview: bool,
+    /// Fórmula de movimiento dinámico opcional que se aplica sobre la composición final.
+    /// Si está presente, el compositor añade un overlay con `eval=frame`.
+    pub motion_formula: Option<MovementFormula>,
+    /// Región temporal a renderizar (None = proyecto completo).
+    pub region: Option<RenderRegion>,
 }
 
 /// Resultado del renderizado

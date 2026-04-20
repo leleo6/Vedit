@@ -1,8 +1,9 @@
 use anyhow::Result;
 use std::path::Path;
 use crate::project::Project;
-use crate::project::clip::{VideoClip, TransitionKind};
+use crate::project::clip::VideoClip;
 use crate::render::VideoFormat;
+use crate::render::filter_chain::build_video_clip_filters;
 use crate::ffmpeg::command::FfmpegCommand;
 
 /// Renderiza únicamente el video del proyecto (sin audio)
@@ -44,130 +45,16 @@ pub async fn render_video(
     let mut current_bg = "bg0".to_string();
 
     for (input_idx, clip) in clips.iter().enumerate() {
-        // Agregar input
         cmd.input(&clip.source_path).ss(clip.source_start);
         if let Some(end) = clip.source_end {
             cmd.to(end - clip.source_start);
         }
 
-        let mut vf: Vec<String> = Vec::new();
+        let mut vf = build_video_clip_filters(clip, width, height);
 
-        // ── Reversa ─────────────────────────────────────────────────────────
-        if clip.reverse {
-            vf.push("reverse".to_string());
-        }
+        // Sincronización de tiempo en el timeline
+        vf.push(format!("setpts=PTS-STARTPTS+{:.3}/TB", clip.timeline_start));
 
-        // ── Velocidad ────────────────────────────────────────────────────────
-        if (clip.speed - 1.0).abs() > 0.001 {
-            vf.push(format!("setpts={:.6}*PTS", 1.0 / clip.speed));
-        }
-
-        // ── Crop ─────────────────────────────────────────────────────────────
-        if let Some(ref c) = clip.crop {
-            vf.push(format!(
-                "crop=iw-{}-{}:ih-{}-{}:{}:{}",
-                c.left, c.right, c.top, c.bottom, c.left, c.top
-            ));
-        }
-
-        // ── Escala ───────────────────────────────────────────────────────────
-        let target_w = (width  as f64 * clip.scale.width ).round() as u32;
-        let target_h = (height as f64 * clip.scale.height).round() as u32;
-        vf.push(format!("scale={}:{}", target_w, target_h));
-
-        // ── Flip ─────────────────────────────────────────────────────────────
-        if clip.flip_horizontal { vf.push("hflip".to_string()); }
-        if clip.flip_vertical   { vf.push("vflip".to_string()); }
-
-        // ── Rotación ─────────────────────────────────────────────────────────
-        if clip.rotation_deg.abs() > 0.001 {
-            let rad = clip.rotation_deg * std::f64::consts::PI / 180.0;
-            vf.push(format!("rotate={:.6}:fillcolor=none", rad));
-        }
-
-        // ── Corrección de color ──────────────────────────────────────────────
-        if clip.color.is_active() {
-            // EQ filter: brightness, contrast, saturation
-            vf.push(format!(
-                "eq=brightness={:.4}:contrast={:.4}:saturation={:.4}",
-                clip.color.brightness, clip.color.contrast, clip.color.saturation
-            ));
-            // Temperatura de color (aproximación: ajuste de tint usando hue)
-            if let Some(temp) = clip.color.temperature_k {
-                // 6500K = neutro; mayor = más cálido (+ rojo/naranja); menor = más frío (+ azul)
-                let tint = (temp - 6500.0) / 6500.0 * 0.3; // normalizado
-                vf.push(format!("hue=s=1:H={:.4}", tint));
-            }
-            // LUT .cube
-            if let Some(ref lut) = clip.color.lut_path {
-                vf.push(format!("lut3d='{}'", lut.display()));
-            }
-        }
-
-        // ── Efectos visuales ─────────────────────────────────────────────────
-        if clip.effects.is_active() {
-            if let Some(r) = clip.effects.blur_radius {
-                vf.push(format!("gblur=sigma={:.2}", r));
-            }
-            if let Some(s) = clip.effects.sharpen {
-                vf.push(format!("unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount={:.2}", s));
-            }
-            if let Some(v) = clip.effects.vignette {
-                // angle controla la intensidad de la viñeta
-                let angle = v * std::f64::consts::PI / 2.0;
-                vf.push(format!("vignette=angle={:.4}", angle));
-            }
-            if let Some(n) = clip.effects.noise {
-                let noise_val = (n * 100.0) as u32;
-                vf.push(format!("noise=alls={}:allf=t+u", noise_val));
-            }
-            if clip.effects.deinterlace {
-                vf.push("yadif=mode=1".to_string());
-            }
-        }
-
-        // ── Fade ─────────────────────────────────────────────────────────────
-        if let Some(ref fi) = clip.fade_in {
-            vf.push(format!("fade=t=in:st=0:d={:.3}", fi.duration_secs));
-        }
-        if let Some(ref fo) = clip.fade_out {
-            let clip_dur = clip.duration();
-            let fo_start = (clip_dur - fo.duration_secs).max(0.0);
-            vf.push(format!("fade=t=out:st={:.3}:d={:.3}", fo_start, fo.duration_secs));
-        }
-
-        // ── Transición de salida ──────────────────────────────────────────────
-        if let Some(ref tr) = clip.transition_out {
-            let clip_dur = clip.duration();
-            let tr_start = (clip_dur - tr.duration_secs).max(0.0);
-            match tr.kind {
-                TransitionKind::FadeToBlack => {
-                    vf.push(format!("fade=t=out:st={:.3}:d={:.3}:color=black", tr_start, tr.duration_secs));
-                }
-                TransitionKind::FadeToWhite => {
-                    vf.push(format!("fade=t=out:st={:.3}:d={:.3}:color=white", tr_start, tr.duration_secs));
-                }
-                TransitionKind::WipeHorizontal => {
-                    // Wipe horizontal via crop animado
-                    vf.push(format!(
-                        "crop=w='if(gt(t,{tr_start:.3}),iw*(1-(t-{tr_start:.3})/{dur:.3}),iw)':h=ih:x=0:y=0",
-                        tr_start = tr_start,
-                        dur = tr.duration_secs
-                    ));
-                }
-                TransitionKind::WipeVertical => {
-                    vf.push(format!(
-                        "crop=w=iw:h='if(gt(t,{tr_start:.3}),ih*(1-(t-{tr_start:.3})/{dur:.3}),ih)':x=0:y=0",
-                        tr_start = tr_start,
-                        dur = tr.duration_secs
-                    ));
-                }
-                // CrossDissolve y Cut no modifican el clip individual
-                _ => {}
-            }
-        }
-
-        // Ensamblar filtro del clip
         let v_node = format!("v{}", input_idx);
         let filter_chain = if vf.is_empty() {
             format!("[{}:v]copy[{}]", input_idx, v_node)
@@ -176,7 +63,6 @@ pub async fn render_video(
         };
         complex_filters.push(filter_chain);
 
-        // Calcular posición de overlay en píxeles
         let ox = (clip.position.x * width as f64).round() as i64;
         let oy = (clip.position.y * height as f64).round() as i64;
         let clip_end = clip.timeline_start + clip.duration();
@@ -197,17 +83,18 @@ pub async fn render_video(
 
     cmd.raw_args(&["-map", &format!("[{}]", current_bg)]);
 
-    // Sin audio
     cmd.raw_args(&["-an"]);
+    cmd.video_codec(video_codec_for(format)).output(output);
+    cmd.run().await
+}
 
-    let vcodec = match format {
+/// Selecciona el codec FFmpeg correspondiente al formato de video solicitado.
+fn video_codec_for(format: &VideoFormat) -> &'static str {
+    match format {
         VideoFormat::Mp4 => "libx264",
         VideoFormat::Mkv => "libx265",
         VideoFormat::Mov => "prores",
-    };
-    cmd.video_codec(vcodec).output(output);
-
-    cmd.run().await
+    }
 }
 
 /// Exporta un frame específico del proyecto como imagen (screenshot)

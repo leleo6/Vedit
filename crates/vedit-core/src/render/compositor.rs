@@ -1,9 +1,12 @@
 use anyhow::Result;
+use std::path::{Path, PathBuf};
 
 use crate::project::Project;
-use crate::project::clip::{ImageMode, KenBurnsEffect, TransitionKind};
+use crate::project::clip::{ImageMode, KenBurnsEffect};
 use crate::project::track::TrackKind;
 use crate::render::{AudioFormat, VideoFormat, RenderJob, RenderOutput};
+use crate::render::filter_chain::build_video_clip_filters;
+use crate::motion::MovementFormula;
 use crate::ffmpeg::command::FfmpegCommand;
 use crate::ffmpeg::escape_filter_arg;
 
@@ -20,36 +23,24 @@ where
     let (frame_w, frame_h) = (project.metadata.width, project.metadata.height);
     let total_duration = project.duration_secs();
 
-    let temp_dir = project.path.as_ref().and_then(|p| p.parent()).unwrap_or(std::path::Path::new(".")).join(".vedit_cache");
-    let _ = std::fs::create_dir_all(&temp_dir);
+    // Si hay una región, el canvas solo dura lo que la región
+    let render_duration = job.region
+        .map(|r| r.duration_secs.min(total_duration - r.start_secs))
+        .unwrap_or(total_duration)
+        .max(0.001); // garantizar duración positiva
 
-    // Pre-procesar estabilización de video
-    for track in project.tracks.iter().filter(|t| !t.muted) {
-        for clip in &track.video_clips {
-            if clip.stabilize {
-                let trf_path = temp_dir.join(format!("{}_stab.trf", clip.id));
-                if !trf_path.exists() {
-                    tracing::info!("Analizando estabilización para {}", clip.name);
-                    let mut stab_cmd = FfmpegCommand::new();
-                    stab_cmd.hide_banner().overwrite();
-                    stab_cmd.input(&clip.source_path);
-                    if clip.source_start > 0.0 {
-                        stab_cmd.ss(clip.source_start);
-                    }
-                    if let Some(end) = clip.source_end {
-                        stab_cmd.to(end - clip.source_start);
-                    }
-                    stab_cmd.video_filter(format!("vidstabdetect=result='{}'", escape_filter_arg(&trf_path.to_string_lossy())));
-                    stab_cmd.output_format("null").output(std::path::Path::new("-"));
-                    let _ = stab_cmd.run().await;
-                }
-            }
-        }
+    if let Some(region) = &job.region {
+        tracing::info!("Región de render: {}", region);
     }
 
+    let temp_dir = resolve_temp_dir(project);
+    let _ = std::fs::create_dir_all(&temp_dir);
+
+    pre_analyze_stabilization(project, &temp_dir).await;
+
     let mut complex_filters = Vec::new();
-    // Fondo base (negro)
-    complex_filters.push(format!("color=c=black:s={}x{}:d={:.3}:r={}[bg0]", frame_w, frame_h, total_duration, project.metadata.fps));
+    // Fondo base (negro) — duración limitada a la región si aplica
+    complex_filters.push(format!("color=c=black:s={}x{}:d={:.3}:r={}[bg0]", frame_w, frame_h, render_duration, project.metadata.fps));
 
     let mut input_idx = 0;
     let mut current_bg = "bg0".to_string();
@@ -62,104 +53,18 @@ where
                 cmd.to(end - clip.source_start);
             }
 
-            let mut vf: Vec<String> = Vec::new();
+            let mut vf = build_video_clip_filters(clip, frame_w, frame_h);
 
-            // Reversa
-            if clip.reverse {
-                vf.push("reverse".to_string());
-            }
-            // Velocidad
-            if (clip.speed - 1.0).abs() > 0.001 {
-                vf.push(format!("setpts={:.6}*PTS", 1.0 / clip.speed));
-            }
-            // Crop
-            if let Some(ref c) = clip.crop {
-                vf.push(format!(
-                    "crop=iw-{}-{}:ih-{}-{}:{}:{}",
-                    c.left, c.right, c.top, c.bottom, c.left, c.top
-                ));
-            }
-            // Escalar al frame
-            let target_w = (frame_w as f64 * clip.scale.width ).round() as u32;
-            let target_h = (frame_h as f64 * clip.scale.height).round() as u32;
-            vf.push(format!("scale={}:{}", target_w, target_h));
-            // Flip
-            if clip.flip_horizontal { vf.push("hflip".to_string()); }
-            if clip.flip_vertical   { vf.push("vflip".to_string()); }
-            // Rotación
-            if clip.rotation_deg.abs() > 0.001 {
-                let rad = clip.rotation_deg * std::f64::consts::PI / 180.0;
-                vf.push(format!("rotate={:.6}:fillcolor=none", rad));
-            }
-            // Corrección de color
-            if clip.color.is_active() {
-                vf.push(format!(
-                    "eq=brightness={:.4}:contrast={:.4}:saturation={:.4}",
-                    clip.color.brightness, clip.color.contrast, clip.color.saturation
-                ));
-                if let Some(ref lut) = clip.color.lut_path {
-                    vf.push(format!("lut3d='{}'", escape_filter_arg(&lut.to_string_lossy())));
-                }
-            }
-            // Efectos visuales
-            if clip.effects.is_active() {
-                if let Some(r) = clip.effects.blur_radius {
-                    vf.push(format!("gblur=sigma={:.2}", r));
-                }
-                if let Some(s) = clip.effects.sharpen {
-                    vf.push(format!("unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount={:.2}", s));
-                }
-                if let Some(v) = clip.effects.vignette {
-                    let angle = v * std::f64::consts::PI / 2.0;
-                    vf.push(format!("vignette=angle={:.4}", angle));
-                }
-                if let Some(n) = clip.effects.noise {
-                    let noise_val = (n * 100.0) as u32;
-                    vf.push(format!("noise=alls={}:allf=t+u", noise_val));
-                }
-                if clip.effects.deinterlace {
-                    vf.push("yadif=mode=1".to_string());
-                }
-            }
-            // Fades
-            if let Some(ref fi) = clip.fade_in {
-                vf.push(format!("fade=t=in:st=0:d={:.3}", fi.duration_secs));
-            }
-            if let Some(ref fo) = clip.fade_out {
-                let clip_dur = clip.duration();
-                let fo_start = (clip_dur - fo.duration_secs).max(0.0);
-                vf.push(format!("fade=t=out:st={:.3}:d={:.3}", fo_start, fo.duration_secs));
-            }
-            // Transición de salida
-            if let Some(ref trans) = clip.transition_out {
-                let clip_dur = clip.duration();
-                let tr_start = (clip_dur - trans.duration_secs).max(0.0);
-                match trans.kind {
-                    TransitionKind::Cut => {}
-                    TransitionKind::FadeToBlack => {
-                        vf.push(format!("fade=t=out:st={:.3}:d={:.3}:color=black", tr_start, trans.duration_secs));
-                    }
-                    TransitionKind::FadeToWhite => {
-                        vf.push(format!("fade=t=out:st={:.3}:d={:.3}:color=white", tr_start, trans.duration_secs));
-                    }
-                    TransitionKind::CrossDissolve => {
-                        vf.push(format!("format=rgba,fade=t=out:st={:.3}:d={:.3}:alpha=1", tr_start, trans.duration_secs));
-                    }
-                    TransitionKind::WipeHorizontal => {
-                        vf.push(format!("crop=iw*max(0\\,1-(t-{:.3})/{:.3}):ih:0:0", tr_start, trans.duration_secs));
-                    }
-                    TransitionKind::WipeVertical => {
-                        vf.push(format!("crop=iw:ih*max(0\\,1-(t-{:.3})/{:.3}):0:0", tr_start, trans.duration_secs));
-                    }
-                }
-            }
-            // Estabilización
+            // Estabilización (requiere archivo .trf pre-generado)
             if clip.stabilize {
                 let trf_path = temp_dir.join(format!("{}_stab.trf", clip.id));
-                vf.push(format!("vidstabtransform=input='{}':optzoom=1:zoomspeed=0.25", escape_filter_arg(&trf_path.to_string_lossy())));
+                vf.push(format!(
+                    "vidstabtransform=input='{}':optzoom=1:zoomspeed=0.25",
+                    escape_filter_arg(&trf_path.to_string_lossy())
+                ));
             }
 
-            // Sincronización de tiempo (PTS)
+            // Sincronización de tiempo en el timeline
             vf.push(format!("setpts=PTS-STARTPTS+{:.3}/TB", clip.timeline_start));
 
             let v_node = format!("v{}", input_idx);
@@ -170,7 +75,6 @@ where
             };
             complex_filters.push(filter_chain);
 
-            // Overlay sobre el fondo
             let ox = (clip.position.x * frame_w as f64).round() as i64;
             let oy = (clip.position.y * frame_h as f64).round() as i64;
             let clip_end = clip.timeline_start + clip.duration();
@@ -324,11 +228,26 @@ where
         complex_filters.push(format!("{}amix=inputs={}:duration=longest[aout]", amix_inputs, audio_inputs.len()));
     }
 
+    // Map outputs
+    // Si hay fórmula de movimiento, la aplicamos como un overlay dinámico final
+    // sobre la composición (eval=frame permite re-evaluar por frame)
+    if let Some(formula) = &job.motion_formula {
+        let motion_filter = build_motion_overlay_filter(formula, frame_w, frame_h, render_duration);
+        let motion_bg = "motion_out".to_string();
+        complex_filters.push(format!(
+            "[{bg}][{bg}]{filter}[{out}]",
+            bg     = current_bg,
+            filter = motion_filter,
+            out    = motion_bg,
+        ));
+        current_bg = motion_bg;
+        tracing::info!("Fórmula de movimiento '{}' aplicada al output final", formula);
+    }
+
     if !complex_filters.is_empty() {
         cmd.complex_filter(complex_filters.join(";"));
     }
 
-    // Map outputs
     cmd.raw_args(&["-map", &format!("[{}]", current_bg)]);
     if !audio_inputs.is_empty() {
         cmd.raw_args(&["-map", "[aout]"]);
@@ -361,11 +280,22 @@ where
            .audio_codec(acodec)
            .output(&job.output_path);
 
-        // Si el job tiene una duración, la usamos para el progreso
-        cmd.raw_args(&["-t", &format!("{:.3}", total_duration)]);
+        // Limitar duración de salida: región o proyecto completo
+        let out_duration = job.region
+            .map(|r| r.duration_secs)
+            .unwrap_or(total_duration);
+        cmd.raw_args(&["-t", &format!("{:.3}", out_duration)]);
+
+        // Seek de salida si la región no comienza en 0
+        if let Some(region) = &job.region {
+            if region.start_secs > 0.001 {
+                // -ss antes del output aplica trim en el stream de salida
+                cmd.raw_args(&["-ss", &format!("{:.3}", region.start_secs)]);
+            }
+        }
 
         let res = if let Some(cb) = on_progress {
-            cmd.run_with_progress(total_duration, cb).await
+            cmd.run_with_progress(out_duration, cb).await
         } else {
             cmd.run().await
         };
@@ -387,8 +317,69 @@ where
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers internos
+// Helpers internos del compositor
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Resuelve la ruta al directorio de caché temporal del proyecto.
+fn resolve_temp_dir(project: &Project) -> PathBuf {
+    project
+        .path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .unwrap_or(Path::new("."))
+        .join(".vedit_cache")
+}
+
+/// Construye un filtro overlay con movimiento dinámico usando `eval=frame`.
+///
+/// El efecto de movimiento se aplica sobre el stream compuesto completo,
+/// re-aplicando el fondo negro como base y usando el `MovementFormula`
+/// para posicionar la composición de forma animada.
+///
+/// El parámetro `duration_secs` limita la duración del efecto al rango de render.
+fn build_motion_overlay_filter(
+    formula: &MovementFormula,
+    frame_w: u32,
+    frame_h: u32,
+    duration_secs: f64,
+) -> String {
+    let exprs = formula.to_ffmpeg_exprs(frame_w, frame_h);
+    format!(
+        "overlay=x='{}':y='{}':enable='between(t,0,{:.3})':eval=frame:eof_action=pass",
+        exprs.x, exprs.y, duration_secs,
+    )
+}
+
+/// Pre-analiza la estabilización de todos los clips que la requieran.
+/// Genera los archivos `.trf` necesarios para `vidstabtransform`.
+async fn pre_analyze_stabilization(project: &Project, temp_dir: &Path) {
+    for track in project.tracks.iter().filter(|t| !t.muted) {
+        for clip in &track.video_clips {
+            if !clip.stabilize {
+                continue;
+            }
+            let trf_path = temp_dir.join(format!("{}_stab.trf", clip.id));
+            if trf_path.exists() {
+                continue;
+            }
+            tracing::info!("Analizando estabilización para '{}'", clip.name);
+            let mut stab_cmd = FfmpegCommand::new();
+            stab_cmd.hide_banner().overwrite().input(&clip.source_path);
+            if clip.source_start > 0.0 {
+                stab_cmd.ss(clip.source_start);
+            }
+            if let Some(end) = clip.source_end {
+                stab_cmd.to(end - clip.source_start);
+            }
+            stab_cmd.video_filter(format!(
+                "vidstabdetect=result='{}'",
+                escape_filter_arg(&trf_path.to_string_lossy())
+            ));
+            stab_cmd.output_format("null").output(Path::new("-"));
+            let _ = stab_cmd.run().await;
+        }
+    }
+}
 
 /// Construye el filtro zoompan de FFmpeg para el efecto Ken Burns
 fn build_ken_burns_filter(

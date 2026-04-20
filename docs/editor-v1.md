@@ -43,6 +43,12 @@ vedit/
     │       │   ├── text.rs            # renderiza solo texto (previews y filtros)
     │       │   └── compositor.rs      # mezcla todo, output final
     │       │
+    │       ├── motion/                # Sistema de animación y regiones
+    │       │   ├── mod.rs             # MovementFormula, RenderRegion
+    │       │   ├── formula.rs         # Lógica de expresiones FFmpeg
+    │       │   ├── presets.rs         # Catálogo de movimientos (dvd, pulse, etc.)
+    │       │   └── region.rs          # Tipado de rangos temporales
+    │       │
     │       ├── ffmpeg/                # Integración con FFmpeg subyacente
     │       │   ├── command.rs
     │       │   ├── mod.rs
@@ -152,10 +158,10 @@ vedit/
 - Ajustar duración del clip
 - Dividir clip en un punto del timeline
 
-- **Posicionamiento y transformación**
+- **Posicionamiento y transformación (Dinámico)**
 
-- Posición en el frame (x, y) — coordenadas absolutas o relativas (top-left, center, etc)
-- Escala (ancho x alto, o porcentaje del frame)
+- Posición en el frame (x, y) — soporta fórmulas FFmpeg (ej. `sin(t)*100`)
+- Escala (ancho x alto) — soporta fórmulas FFmpeg (ej. `1.0 + 0.1*sin(t)`)
 - Rotación en grados
 - Opacidad (0.0 a 1.0)
 Recortar imagen (crop antes de colocarla)
@@ -200,10 +206,10 @@ Recortar imagen (crop antes de colocarla)
 - Dividir clip en un punto del timeline
 - Ajustar duración (stretch sin cambiar velocidad)
 
-- **Transformación**
+- **Transformación (Dinámica)**
 
-- Escala (porcentaje o resolución exacta)
-- Posición en el frame (x, y)
+- Escala (soporta expresiones matemáticas evaluadas por frame)
+- Posición en el frame (x, y) (soporta expresiones matemáticas)
 - Rotación en grados
 - Flip horizontal / vertical
 - Crop (recortar región del frame)
@@ -283,7 +289,7 @@ Recortar imagen (crop antes de colocarla)
 - Rotación en grados
 
 - **Efectos por clip**
-
+ 
 - Fade in / fade out de opacidad
 - Animación de entrada: typewriter (letra por letra), slide, fade
 - Animación de salida: fade, slide
@@ -300,6 +306,24 @@ Recortar imagen (crop antes de colocarla)
 
 - Renderizar texto como parte del compositor final
 - Preview de texto sin renderizar todo el proyecto
+
+### Módulo de Movimiento Dinámico (Nuevo)
+
+- **Fórmulas Matemáticas (Integración FFmpeg)**
+    - Evaluación por frame (`eval=frame`) para animaciones fluidas.
+    - Acceso a variables de tiempo (`t`) y número de frame (`n`).
+    - Redondeo automático de dimensiones (`trunc`) para compatibilidad con codecs.
+
+- **Catálogo de Presets**
+    - `dvd_bounce`: Rebote diagonal clásico.
+    - `pulse_slow/fast`: Efecto de respiración/latido.
+    - `drift_left/right`: Traslación lineal constante.
+    - `shake`: Vibración aleatoria-determinista mediante armónicos.
+    - `orbit`: Movimiento circular alrededor de un centro.
+
+- **Control de Regiones**
+    - Definición de `RenderRegion` (inicio y duración).
+    - Soporte para renderizado parcial del timeline para feedback rápido.
 
 ### Módulo de Render
 
@@ -338,11 +362,17 @@ Recortar imagen (crop antes de colocarla)
 - Pausar / reanudar render
 - Log de errores durante el render
 
-- **Optimización**
+- **Optimización y Control Avanzado**
 
-- Renderizar solo el rango seleccionado (in/out points)
-- Render en paralelo de segmentos independientes
-- Preview rápido (baja calidad, resolución reducida)
+- **Renderizado por Regiones**: Renderizar solo el rango seleccionado (`--start-time`, `--duration`).
+- **Motion Overlays**: Aplicar fórmulas de movimiento global sobre la composición final.
+- **Evaluación Dinámica**: Los filtros de escala y posición se recalculan en cada frame.
+- **Seguridad de Dimensiones**: Forzado de dimensiones pares para compatibilidad total con `libx264`.
+
+- **Presets**
+
+- Guardar configuración de render como preset reutilizable.
+- Listar y previsualizar fórmulas de movimiento disponibles (`render motion list`).
 
 - **Presets**
 
