@@ -60,6 +60,9 @@ vedit/
     │       ├── cache/                 # Gestión de archivos temporales y proxies
     │       │   └── mod.rs
     │       │
+    │       ├── config/                # Configuración global del usuario
+    │       │   └── mod.rs             # VeditConfig (encoder, HW accel, paths)
+    │       │
     │       └── context/               # Contexto de ejecución para plugins/efectos
     │           └── mod.rs
     │
@@ -75,8 +78,8 @@ vedit/
     │           ├── video.rs           # add, transform, speed, color, effects, transition
     │           ├── image.rs           # add, move, transform, mode
     │           ├── text.rs            # add, style, position, import-srt
-    │           └── render.rs          # render con opciones (export-frame, text-preview)
-    │
+    │           ├── render.rs          # render con opciones (export-frame, text-preview)
+    │           └── config.rs          # set, show, check, reset globales
     └── vedit-gui/
         └── src/
             └── main.rs                # placeholder (futuro frontend)
@@ -289,7 +292,7 @@ Recortar imagen (crop antes de colocarla)
 - Rotación en grados
 
 - **Efectos por clip**
- 
+
 - Fade in / fade out de opacidad
 - Animación de entrada: typewriter (letra por letra), slide, fade
 - Animación de salida: fade, slide
@@ -369,11 +372,15 @@ Recortar imagen (crop antes de colocarla)
 - **Evaluación Dinámica**: Los filtros de escala y posición se recalculan en cada frame.
 - **Seguridad de Dimensiones**: Forzado de dimensiones pares para compatibilidad total con `libx264`.
 
-- **Presets**
+- **Presets de Render**
 
 - Guardar configuración de render como preset reutilizable.
 - Listar y previsualizar fórmulas de movimiento disponibles (`render motion list`).
 
-- **Presets**
+- **Configuración Global**
 
-- Guardar configuración de render como preset reutilizable
+- Configurar rutas personalizadas de `ffmpeg` y `ffprobe`.
+- Definir hardware encoding por defecto (`h264_nvenc`, `h264_vaapi`, `h264_amf`).
+- Asignar valores predeterminados para nuevos proyectos (resolución, FPS).
+- Controlar el uso de CPU con `max_threads` y limpieza automática del `cache_dir`.
+- Subcomando `vedit config check` para verificar la instalación y capacidades.

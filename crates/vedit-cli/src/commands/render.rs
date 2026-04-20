@@ -247,6 +247,9 @@ pub async fn run(cmd: RenderCmd) -> Result<()> {
             // Resolver fórmula de movimiento (si se pasa --motion)
             let motion_formula = resolve_motion_formula(motion.as_deref())?;
 
+            // Cargar configuración global (preferencias de FFmpeg)
+            let config = vedit_core::config::VeditConfig::load().ok();
+
             let project = Project::load(&proj_path).await?;
             project.validate_for_render()?;
             let vfmt: VideoFormat = format.into();
@@ -288,6 +291,7 @@ pub async fn run(cmd: RenderCmd) -> Result<()> {
                 is_live_preview: false,
                 motion_formula,
                 region,
+                config,
             };
 
             let result = render::compositor::composite(&job, &project, Some(on_progress)).await?;
@@ -378,6 +382,8 @@ pub async fn run(cmd: RenderCmd) -> Result<()> {
             println!("  Iniciando FFplay pipeline...");
             println!("  (Cierra la ventana de FFplay para detener)");
 
+            let config = vedit_core::config::VeditConfig::load().ok();
+
             let job = RenderJob {
                 project_path: proj_path,
                 output_path: PathBuf::from("-"),
@@ -388,6 +394,7 @@ pub async fn run(cmd: RenderCmd) -> Result<()> {
                 is_live_preview: true,
                 motion_formula: None,
                 region: None,
+                config,
             };
 
             let _ = render::compositor::composite(&job, &project, None::<fn(f64)>).await?;

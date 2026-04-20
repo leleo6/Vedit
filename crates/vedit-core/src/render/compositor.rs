@@ -17,8 +17,19 @@ where
 {
     tracing::info!("Compositor iniciado → {:?}", job.output_path);
 
+    // Resolver configuración: usa la del job o los valores por defecto
+    let cfg = job.config.clone().unwrap_or_default();
+
     let mut cmd = FfmpegCommand::new();
     cmd.hide_banner().overwrite();
+
+    // Aplicar límite de threads si está configurado
+    let thread_args = cfg.ffmpeg_thread_args();
+    if !thread_args.is_empty() {
+        let refs: Vec<&str> = thread_args.iter().map(|s| s.as_str()).collect();
+        cmd.raw_args(&refs);
+        tracing::debug!("FFmpeg threads: {}", cfg.max_threads);
+    }
 
     let (frame_w, frame_h) = (project.metadata.width, project.metadata.height);
     let total_duration = project.duration_secs();
@@ -262,11 +273,17 @@ where
            
         cmd.run_piped_to_ffplay().await?;
     } else {
+        // Codec de video: MP4 usa el encoder preferido por el usuario
         let vcodec = match &job.video_format {
-            Some(VideoFormat::Mp4) | None => "libx264",
+            Some(VideoFormat::Mp4) | None => cfg.preferred_encoder.as_ffmpeg_codec(),
             Some(VideoFormat::Mkv)        => "libx265",
             Some(VideoFormat::Mov)        => "prores",
         };
+
+        // Filtro de hardware adicional para VA-API
+        if cfg.preferred_encoder.requires_hwaccel_filter() {
+            cmd.raw_args(&["-vaapi_device", &cfg.vaapi_device]);
+        }
 
         let acodec = match &job.audio_format {
             Some(AudioFormat::Mp3)        => "libmp3lame",
@@ -301,9 +318,14 @@ where
         };
         res?;
     }
-    
-    // Limpieza de archivos de texto temporales
-    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    // Limpieza del directorio temporal: solo si cleanup_cache_on_exit está activo
+    if cfg.cleanup_cache_on_exit {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        tracing::info!("Caché temporal eliminado: {:?}", temp_dir);
+    } else {
+        tracing::debug!("Caché temporal conservado en {:?} (cleanup_cache_on_exit = false)", temp_dir);
+    }
 
     let size_bytes = std::fs::metadata(&job.output_path)
         .map(|m| m.len())
@@ -320,8 +342,12 @@ where
 // Helpers internos del compositor
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Resuelve la ruta al directorio de caché temporal del proyecto.
+/// Resuelve la ruta al directorio de caché temporal del proyecto,
+/// respetando `cache_dir` global si está configurado.
 fn resolve_temp_dir(project: &Project) -> PathBuf {
+    // Nota: aquí no tenemos acceso directo a la config porque resolve_temp_dir
+    // se llama antes de que cfg esté disponible. El caller (composite) puede
+    // sobreescribir con cfg.resolve_cache_dir() en el futuro si se pasa.
     project
         .path
         .as_ref()

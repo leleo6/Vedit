@@ -7,6 +7,7 @@ pub(crate) mod filter_chain;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use crate::motion::{MovementFormula, RenderRegion};
+use crate::config::VeditConfig;
 
 /// Formatos de salida de video
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,10 +80,11 @@ pub struct RenderJob {
     pub aspect: Option<AspectRatio>,
     pub is_live_preview: bool,
     /// Fórmula de movimiento dinámico opcional que se aplica sobre la composición final.
-    /// Si está presente, el compositor añade un overlay con `eval=frame`.
     pub motion_formula: Option<MovementFormula>,
     /// Región temporal a renderizar (None = proyecto completo).
     pub region: Option<RenderRegion>,
+    /// Configuración global del usuario. Si es `None` se usan los valores por defecto.
+    pub config: Option<VeditConfig>,
 }
 
 /// Resultado del renderizado

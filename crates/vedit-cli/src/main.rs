@@ -15,6 +15,7 @@ use commands::{
     render::RenderCmd,
     history::HistoryCmd,
     cache::CacheCmd,
+    config::ConfigCmd,
 };
 
 const BANNER: &str = r#"
@@ -86,6 +87,10 @@ enum Commands {
     /// Gestión de archivos temporales y proxies
     #[command(subcommand)]
     Cache(CacheCmd),
+
+    /// Configuración global de Vedit (FFmpeg, codecs, FPS, resolución...)
+    #[command(subcommand)]
+    Config(ConfigCmd),
 }
 
 #[tokio::main]
@@ -113,5 +118,6 @@ async fn main() -> Result<()> {
         Commands::Render(cmd)  => commands::render::run(cmd).await,
         Commands::History(cmd) => commands::history::run(cmd).await,
         Commands::Cache(cmd)   => commands::cache::run(cmd).await,
+        Commands::Config(cmd)  => commands::config::run(cmd).await,
     }
 }

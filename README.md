@@ -103,6 +103,23 @@ vedit render text-preview -p mi_proyecto -o preview.mp4
 vedit render audio -p mi_proyecto -o mixdown.wav --format wav
 ```
 
+### Configuración Global ⚙️
+Vedit permite personalizar el entorno y la aceleración por hardware a nivel global:
+```bash
+# Ver configuración actual
+vedit config show
+
+# Usar NVIDIA NVENC o Intel VA-API por defecto para renders más rápidos
+vedit config set preferred-encoder h264_nvenc
+
+# Cambiar FPS y resolución predeterminada para nuevos proyectos
+vedit config set default-fps 60
+vedit config set default-resolution 1920x1080
+
+# Diagnóstico del entorno (verifica FFmpeg y HW accel)
+vedit config check
+```
+
 ## 🛡️ Estabilidad y Tests
 Vedit posee una arquitectura altamente defensiva y validada:
 - No falla ante rutas de archivo faltantes o no-UTF8 (se rechaza en validación).

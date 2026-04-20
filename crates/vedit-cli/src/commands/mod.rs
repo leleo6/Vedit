@@ -8,6 +8,7 @@ pub mod text;
 pub mod render;
 pub mod history;
 pub mod cache;
+pub mod config;
 
 /// Helpers de presentación compartidos
 use console::style;
