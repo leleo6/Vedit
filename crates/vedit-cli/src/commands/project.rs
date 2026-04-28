@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use anyhow::Result;
 use clap::Subcommand;
-use console::style;
+use console::{style, Term};
 use vedit_core::project::Project;
 use super::{success, section};
 
@@ -36,6 +36,11 @@ pub enum ProjectCmd {
     /// Rehace la última operación deshecha (Redo)
     Redo {
         /// Ruta al archivo .vedit
+        path: PathBuf,
+    },
+    /// Muestra una representación visual de la línea de tiempo
+    Timeline {
+        /// Ruta al directorio del proyecto o archivo .vedit
         path: PathBuf,
     },
 }
@@ -88,6 +93,11 @@ pub async fn run(cmd: ProjectCmd) -> Result<()> {
                 println!("{} Nada que rehacer.", style("!").yellow());
             }
         }
+
+        ProjectCmd::Timeline { path } => {
+            let project = Project::load(&path).await?;
+            print_timeline(&project);
+        }
     }
     Ok(())
 }
@@ -120,3 +130,80 @@ fn print_project_info(project: &Project, path: &std::path::Path) {
         }
     }
 }
+
+fn print_timeline(project: &Project) {
+    let duration = project.duration_secs();
+    section(&format!("Línea de Tiempo: {} (Total: {:.1}s)", project.metadata.name, duration));
+
+    if duration <= 0.0 || project.tracks.is_empty() {
+        println!("  {} No hay clips en el proyecto o la duración es 0.", style("!").yellow());
+        return;
+    }
+
+    // Usar la anchura de la terminal
+    let term_width = Term::stdout().size().1 as usize;
+    // Reservar un pequeño margen. Mínimo 40 caracteres, máximo ancho terminal
+    let bar_width = term_width.saturating_sub(4).max(40);
+
+    // Encabezado de tiempo
+    println!("\n  0s {:>width$} {:.1}s", "", duration, width = bar_width - 12);
+    println!("  |{}|", "-".repeat(bar_width - 2));
+
+    for track in project.tracks.iter().rev() {
+        println!("\n  {} {} ({})", style("Track:").dim(), style(&track.name).bold().white(), style(&track.kind).dim());
+
+        // Recolectar todos los clips iterando por tipo (ya que cada uno está en su array)
+        struct ClipData {
+            name: String,
+            start: f64,
+            end: f64,
+        }
+
+        let mut clips = Vec::new();
+
+        for c in &track.audio_clips {
+            clips.push(ClipData { name: c.name.clone(), start: c.timeline_start, end: c.timeline_start + c.duration() });
+        }
+        for c in &track.video_clips {
+            clips.push(ClipData { name: c.name.clone(), start: c.timeline_start, end: c.timeline_start + c.duration() });
+        }
+        for c in &track.image_clips {
+            clips.push(ClipData { name: c.name.clone(), start: c.timeline_start, end: c.timeline_start + c.duration() });
+        }
+        for c in &track.text_clips {
+            clips.push(ClipData { name: c.text.chars().take(15).collect::<String>(), start: c.timeline_start, end: c.timeline_start + c.duration() });
+        }
+
+        // Ordenar por start
+        clips.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap());
+
+        // Renderizar barra ASCII para el track entero
+        let mut bar = vec!['░'; bar_width];
+        for clip in &clips {
+            let start_idx = ((clip.start / duration) * (bar_width as f64)).floor() as usize;
+            let end_idx = ((clip.end / duration) * (bar_width as f64)).ceil() as usize;
+            
+            let start_idx = start_idx.min(bar_width - 1);
+            let end_idx = end_idx.clamp(start_idx + 1, bar_width);
+
+            for i in start_idx..end_idx {
+                bar[i] = '█';
+            }
+        }
+        
+        let track_color = match track.kind {
+            vedit_core::project::track::TrackKind::Video => console::Style::new().blue(),
+            vedit_core::project::track::TrackKind::Audio => console::Style::new().green(),
+            vedit_core::project::track::TrackKind::Image => console::Style::new().magenta(),
+            vedit_core::project::track::TrackKind::Text  => console::Style::new().cyan(),
+        };
+
+        let bar_str: String = bar.into_iter().collect();
+        println!("  [{}]", track_color.apply_to(bar_str));
+
+        for clip in &clips {
+            println!("    {} {:.1}s - {:.1}s: {}", style("├─").dim(), clip.start, clip.end, style(&clip.name).dim());
+        }
+    }
+}
+

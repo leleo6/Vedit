@@ -56,6 +56,7 @@ Vedit ahora gestiona proyectos como directorios. Al crear uno, se genera una car
 ```bash
 vedit project new mi_proyecto --fps 30.0
 vedit project info -p mi_proyecto
+vedit project timeline -p mi_proyecto
 vedit project undo -p mi_proyecto
 vedit project redo -p mi_proyecto
 ```
@@ -72,8 +73,8 @@ vedit track list -p mi_proyecto
 ### Manipulación de Clips Multimedia
 Posiciona elementos en la línea de tiempo.
 ```bash
-# Añadir audio
-vedit clip add -p mi_proyecto "Voz Off" ./mi_audio.mp3 --at 5.0
+# Añadir audio (con duración explícita opcional para omitir ffprobe)
+vedit clip add -p mi_proyecto "Voz Off" ./mi_audio.mp3 --at 5.0 --duration 10.0
 vedit clip trim -p mi_proyecto "Voz Off" <CLIP_ID> --start 5.0 --end 10.0
 
 # Añadir imágenes (Ej: overlay de un logo de 5 segundos)
