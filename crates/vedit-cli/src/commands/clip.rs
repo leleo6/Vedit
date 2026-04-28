@@ -22,6 +22,9 @@ pub enum ClipCmd {
         /// Nombre descriptivo del clip
         #[arg(long)]
         name: Option<String>,
+        /// Duración en segundos (si no se proporciona, se auto-detectará)
+        #[arg(long)]
+        duration: Option<f64>,
     },
     /// Elimina un clip de un track
     Remove {
@@ -90,7 +93,7 @@ pub enum ClipCmd {
 
 pub async fn run(cmd: ClipCmd) -> Result<()> {
     match cmd {
-        ClipCmd::Add { project: proj_path, track, source, at, name } => {
+        ClipCmd::Add { project: proj_path, track, source, at, name, duration } => {
             let mut project = Project::load(&proj_path).await?;
             let tid = resolve_track_id(&project, &track)?;
             let clip_name = name.unwrap_or_else(|| {
@@ -98,8 +101,10 @@ pub async fn run(cmd: ClipCmd) -> Result<()> {
             });
             let mut clip = AudioClip::new(&clip_name, &source, at);
             
-            // Detectar duración automáticamente si ffprobe está disponible
-            if let Ok(dur) = get_media_duration(&source).await {
+            // Si el usuario proporcionó una duración, usarla. Si no, detectar con ffprobe
+            if let Some(d) = duration {
+                clip.source_end = Some(d);
+            } else if let Ok(dur) = get_media_duration(&source).await {
                 clip.source_end = Some(dur);
             } else {
                 warn("No se pudo detectar la duración del archivo. Asegúrate de que ffprobe esté instalado.");

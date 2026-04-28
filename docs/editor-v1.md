@@ -71,7 +71,7 @@ vedit/
     │       ├── main.rs
     │       └── commands/
     │           ├── mod.rs
-    │           ├── project.rs         # new, open, info
+    │           ├── project.rs         # new, open, info, timeline
     │           ├── track.rs           # add, remove, list
     │           ├── clip.rs            # add, remove, move
     │           ├── audio.rs           # mix, mute, normalize, fade
@@ -93,12 +93,14 @@ vedit/
 - **tracing**: Logs estructurados (filtrado por niveles como debug, info, error).
 - **serde / serde_json**: Serialización estricta del proyecto.
 - **uuid / chrono**: Generación de identificadores de clips y marcas de tiempo del historial.
+- **console**: Para la renderización de la línea de tiempo interactiva (timeline) con colores adaptables al ancho de la terminal.
 
 ### Seguridad y Arquitectura Reciente
 - Migración a operaciones de I/O de archivos utilizando un modelo completamente asíncrono (Tokio) para prevenir el bloqueo del hilo principal.
 - Implementación de validaciones estrictas de integridad del proyecto (asegurando que los medios existen y que hay clips en la línea de tiempo) antes de ejecutar tareas intensivas de renderizado.
 - Sistema de Undo/Redo acotado en memoria a un stack máximo de 50 operaciones para prevenir _memory leaks_ en proyectos de alta complejidad.
 - Dependencia principal de delegación en **FFmpeg**, usando comandos eficientes desde Rust en lugar de bindings poco mantenidos de bibliotecas de terceros.
+- Incorporación de un comando `vedit project timeline` para inspección visual y responsiva de los tracks sin necesidad de un entorno gráfico.
 
 ### Formatos Soportados (Salida)
 - Resolución de Pantalla: `9:16` y `16:9`
@@ -119,7 +121,7 @@ vedit/
     - Reordenar tracks (cambia prioridad en el mix).
 
 - **Gestión de Clips (dentro de un track)**
-    - Agregar clip desde archivo fuente con posición definida en la línea de tiempo (timeline_start).
+    - Agregar clip desde archivo fuente con posición definida (timeline_start) y duración manual opcional para omitir ffprobe.
     - Eliminar clip o mover de posición.
     - Recortar clip (ajustar source_start / source_end limitando la duración fuente).
     - Ajustar el volumen individual independiente del track.
